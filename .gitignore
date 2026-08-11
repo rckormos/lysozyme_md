@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Local scientific workspaces and large/generated MD files
+runs/
+design_*/
+*.nc
+*.mdcrd
+*.dcd
+*.rst7
+*.ncrst
+*.parm7
+*.prmtop
+*.out
+*.err
+
+# Optional local high-fidelity regression assets
+.local-regression-data/

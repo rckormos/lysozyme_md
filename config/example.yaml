@@ -1,0 +1,61 @@
+name: lysozyme_design_042
+
+protein:
+  fasta: ../examples/human_lysozyme_pg/input/sequence.fasta
+  expected_residues: 130
+
+chai:
+  enabled: true
+  model_index: 0
+  ligand_resname: LIG
+  glycan_smiles: >
+    CC(=O)N[C@H]1[C@H](O)O[C@H](CO)[C@@H](O2)[C@@H]1O.
+    C[C@@H](O[C@H]3[C@H](O4)[C@@H](CO)O[C@@H]2[C@@H]3NC(C)=O)C(O)=O.
+    CC(=O)N[C@H]5[C@H]4O[C@H](CO)[C@@H](O6)[C@@H]5O.
+    C[C@@H](O[C@H]7[C@H](O)[C@@H](CO)O[C@@H]6[C@@H]7NC(C)=O)C(O)=O
+
+glycam:
+  bundle: ../examples/human_lysozyme_pg/input/glycam_structure_fixture.zip
+  unit_name: CONDENSEDSEQUENCE
+  bacterial_frcmod: frcmod.glycam06_bacterial_K3O
+  acid_frcmod: frcmod.glycam06_intraring_doublebond_protonatedacids
+  expected_heavy_atoms: 67
+  expected_residues: 5
+
+forcefield:
+  protein: ff19SB
+  glycan: GLYCAM_06j-1
+  water: OPC
+
+solvent:
+  buffer_angstrom: 12.0
+  salt: KCl
+  concentration_molar: 0.05
+
+md:
+  temperature_k: 300.0
+  pressure_bar: 1.0
+  cutoff_angstrom: 9.0
+  production_timestep_fs: 2.0
+
+equilibration:
+  hydrogen_relax_steps: 1000
+  solvent_min_steps: 5000
+  all_min_steps: 5000
+  heat_ps: 100
+  npt_5_ps: 250
+  npt_1_ps: 250
+  npt_free_ps: 500
+
+production:
+  target_ns: 1000
+  chunk_ns: 250
+  walltime_hours: 72
+
+scheduler:
+  type: lsf
+  project: chai_DCA_lysozyme_C
+  gpu_queue: gpu
+  gpu_resource: num=1/host
+  memory: 32GB
+  cores: 1
