@@ -139,3 +139,26 @@ export LYSO_MD_REGRESSION_DATA=/path/to/asset_bundle_final
 ```
 
 Normal Phase 0/1 tests require neither Amber, Chai, nor those real scientific assets.
+
+## Phase 2: Chai-1 holo prediction
+
+Phase 2 is invoked through the preparation convenience wrapper from an initialized workspace:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --through chai --dry-run
+lyso-md prepare /path/to/workspace/config.yaml --through chai
+```
+
+The stage writes `01_chai/chai_input.fasta`, `expected_command.sh`, `chai.log`, `validation.json`, the selected `pred.model_idx_N.pdb`, and `.done` only after validation succeeds. Raw Chai output, including the CIF, is preserved under `01_chai/chai_output/`.
+
+By default the generated shell command uses the St. Jude cluster setup supplied for this project:
+
+```bash
+source /home/rkormos/miniforge3/etc/profile.d/mamba.sh
+mamba activate env_chai
+chai-lab fold INPUT_FASTA OUTPUT_DIR
+```
+
+The command, mamba initialization script, and environment name are configurable in the `chai:` section. Dry-run mode writes the exact command and inputs but does not execute Chai and never writes `.done`.
+
+Successful execution fails closed unless the selected model exists, the protein residue count matches configuration, the ligand is present, the ligand heavy-atom count matches the RDKit count from the configured stereospecific SMILES, all coordinates are finite, and PDB atom serials are unique.

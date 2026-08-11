@@ -19,8 +19,11 @@ class ProteinConfig(StrictModel):
 class ChaiConfig(StrictModel):
     enabled: bool = True
     model_index: int = Field(default=0, ge=0)
-    ligand_resname: str = Field(default="LIG", min_length=1)
+    ligand_resname: str = Field(default="LIG", min_length=1, max_length=3)
     glycan_smiles: str = Field(min_length=1)
+    command: str = "chai-lab fold"
+    mamba_init: str | None = "/home/rkormos/miniforge3/etc/profile.d/mamba.sh"
+    mamba_env: str | None = "env_chai"
 
 
 class GlycamConfig(StrictModel):

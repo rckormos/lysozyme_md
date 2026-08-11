@@ -15,6 +15,7 @@ dependencies:
   - scipy>=1.12,<2
   - networkx>=3.2,<4
   - rdkit>=2024.03
+  - gemmi>=0.6,<1
   - parmed>=4.2,<5
   - pip:
       - -e .

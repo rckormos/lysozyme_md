@@ -8,6 +8,7 @@ import typer
 from pydantic import ValidationError
 
 from .config import load_config
+from .chai import run_chai
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -93,8 +94,26 @@ def prepare(
     through: Optional[str] = typer.Option(None, "--through"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Convenience wrapper for preparation stages (stub in Phases 0-1)."""
-    _stub("prepare", config, from_stage, through, dry_run)
+    """Run implemented preparation stages; Phase 2 currently implements Chai only."""
+    try:
+        cfg = load_config(config, check_files=True)
+        if from_stage not in (None, "chai"):
+            raise ValueError("Phase 2 supports --from chai only")
+        if through not in (None, "chai"):
+            raise ValueError("Phase 2 supports --through chai only")
+        workspace = config.parent.resolve()
+        if not (workspace / "manifest.json").is_file():
+            raise ValueError("prepare must be run with the initialized workspace config.yaml")
+        if not cfg.chai.enabled:
+            typer.echo("Chai stage disabled by configuration")
+            return
+        result = run_chai(cfg, workspace=workspace, dry_run=dry_run)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    if result.dry_run:
+        typer.echo(f"Prepared Chai dry run: {result.stage_dir}")
+    else:
+        typer.echo(f"Chai stage complete: {result.selected_pdb}")
 
 
 @app.command()
