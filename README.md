@@ -244,3 +244,15 @@ validation.json
 ```
 
 `protein_chai.pdb` contains no hydrogen or ligand records. The audit TSV records chain/residue identifiers and SG-SG distances, while `disulfide_bonds.leap` contains commands such as `bond protein.6.SG protein.128.SG`. The `.done` sentinel is written only after all validation checks pass.
+## Phase 7: dry LEaP complex assembly
+
+After the GLYCAM inspection, mapping, coordinate transfer, and protein preparation stages have completed, assemble the dry protein/glycan complex with Amber LEaP:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --from leap --through leap --dry-run
+lyso-md prepare /path/to/workspace/config.yaml --from leap --through leap
+```
+
+Phase 7 is a local Amber stage and is not submitted through LSF. Amber must be available in `PATH`, normally after `module load amber/22_rhel8`. The generated `03_dry_relax/leap.in` sources `ff19SB` and `GLYCAM_06j-1`, loads the two GLYCAM-Web frcmod files, loads the aligned GLYCAM OFF unit and prepared protein, applies the detected disulfide bonds, checks/charges the assembled complex, and writes `complex_dry.pdb`, `complex_dry.parm7`, and `complex_dry.rst7`.
+
+LEaP output is parsed fail-closed for fatal/unknown-residue/untypeable-atom/missing-parameter errors, non-integral total charge, missing outputs, inconsistent PDB/parm7/restart atom counts, and non-finite coordinates. `03_dry_relax/.done` is written only after all checks pass.

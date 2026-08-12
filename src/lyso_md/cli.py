@@ -13,6 +13,7 @@ from .glycam import inspect_glycam_bundle
 from .mapping import map_chai_to_glycam
 from .protein import prepare_protein
 from .structure import transfer_glycan_coordinates
+from .leap import assemble_dry_complex
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -92,12 +93,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap")
     if from_stage not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein")
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap")
     if through not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein")
-    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5}
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap")
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -154,7 +155,11 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        if start_stage in {"chai", "glycam"} and end_stage in {"glycam", "mapping", "coordinates"}:
+        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6}
+        start_num = stage_order[start_stage]
+        end_num = stage_order[end_stage]
+
+        if start_num <= stage_order["glycam"] <= end_num:
             glycam_done = workspace / "02_prepare" / "glycam" / ".done"
             if not glycam_done.is_file():
                 if dry_run:
@@ -166,7 +171,7 @@ def prepare(
                 typer.echo(f"GLYCAM inspection already complete: {glycam_done}")
                 return
 
-        if start_stage in {"chai", "glycam", "mapping"} and end_stage in {"mapping", "coordinates"}:
+        if start_num <= stage_order["mapping"] <= end_num:
             mapping_done = workspace / "02_prepare" / "mapping" / ".done"
             if not mapping_done.is_file():
                 if dry_run:
@@ -178,27 +183,41 @@ def prepare(
                 typer.echo(f"Chai-to-GLYCAM mapping already complete: {mapping_done}")
                 return
 
-        if start_stage in {"chai", "glycam", "mapping", "coordinates"} and end_stage == "protein":
-            if not (workspace / "02_prepare" / "coordinate_transfer" / ".done").is_file():
+        if start_num <= stage_order["coordinates"] <= end_num:
+            coordinate_done = workspace / "02_prepare" / "coordinate_transfer" / ".done"
+            if not coordinate_done.is_file():
+                if dry_run:
+                    typer.echo("Coordinate transfer is a local deterministic stage; --dry-run does not execute it.")
+                    return
+                result = transfer_glycan_coordinates(cfg, workspace=workspace)
+                typer.echo(f"Glycan coordinate transfer complete: {result.aligned_off_path}")
+            elif end_stage == "coordinates":
+                typer.echo(f"Coordinate transfer already complete: {coordinate_done}")
+                return
+
+        if start_num <= stage_order["protein"] <= end_num:
+            protein_done = workspace / "02_prepare" / "protein" / ".done"
+            if not protein_done.is_file():
                 if dry_run:
                     typer.echo("Protein preparation is a local deterministic stage; --dry-run does not execute it.")
                     return
-                transfer_glycan_coordinates(cfg, workspace=workspace)
-
-        if end_stage == "coordinates":
-            if dry_run:
-                typer.echo("Coordinate transfer is a local deterministic stage; --dry-run does not execute it.")
+                result = prepare_protein(cfg, workspace=workspace)
+                typer.echo(f"Protein preparation complete: {result.protein_pdb}")
+            elif end_stage == "protein":
+                typer.echo(f"Protein preparation already complete: {protein_done}")
                 return
-            result = transfer_glycan_coordinates(cfg, workspace=workspace)
-            typer.echo(f"Glycan coordinate transfer complete: {result.aligned_off_path}")
+
+        if end_stage == "leap":
+            leap_done = workspace / "03_dry_relax" / ".done"
+            if leap_done.is_file():
+                typer.echo(f"Dry LEaP assembly already complete: {leap_done}")
+                return
+            result = assemble_dry_complex(cfg, workspace=workspace, dry_run=dry_run)
+            if result.dry_run:
+                typer.echo(f"Prepared dry LEaP input: {result.input_path}")
+            else:
+                typer.echo(f"Dry LEaP assembly complete: {result.complex_pdb}")
             return
-
-        if end_stage == "protein":
-            if dry_run:
-                typer.echo("Protein preparation is a local deterministic stage; --dry-run does not execute it.")
-                return
-            result = prepare_protein(cfg, workspace=workspace)
-            typer.echo(f"Protein preparation complete: {result.protein_pdb}")
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
 
