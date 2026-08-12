@@ -221,3 +221,26 @@ hydrogen_validation.json
 ```
 
 The stage fails closed if the Phase 4 mapping is incomplete, an OFF hydrogen has invalid connectivity, any coordinate becomes non-finite, the aligned OFF changes topology/parameters, a mapped heavy coordinate is not preserved on serialization, or an X-H bond length changes beyond tolerance.
+
+
+## Phase 6: protein preparation and disulfide detection
+
+Run the protein-only preparation stage with:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --from protein --through protein
+```
+
+Phase 6 extracts only protein `ATOM` records from the validated Chai PDB, removes hydrogens, preserves protein residue numbering, detects candidate disulfides from CYS SG-SG distances using the pipeline default cutoff of 2.4 Å, renames participating CYS residues to `CYX`, and emits the corresponding LEaP `bond` commands. Disulfide residue numbers are discovered from coordinates and are never hard-coded. The stage fails closed if the protein residue count is wrong, a CYS lacks SG, residue numbers are ambiguous for LEaP addressing, or a CYS SG is within the cutoff of multiple partners.
+
+Outputs are written under `02_prepare/protein/`:
+
+```text
+protein_chai.pdb
+disulfides.tsv
+disulfide_bonds.leap
+validation.json
+.done
+```
+
+`protein_chai.pdb` contains no hydrogen or ligand records. The audit TSV records chain/residue identifiers and SG-SG distances, while `disulfide_bonds.leap` contains commands such as `bond protein.6.SG protein.128.SG`. The `.done` sentinel is written only after all validation checks pass.
