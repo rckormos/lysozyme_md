@@ -11,6 +11,7 @@ from .config import load_config
 from .chai import run_chai, submit_chai
 from .glycam import inspect_glycam_bundle
 from .mapping import map_chai_to_glycam
+from .structure import transfer_glycan_coordinates
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -90,12 +91,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates")
     if from_stage not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping")
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates")
     if through not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping")
-    order = {"chai": 1, "glycam": 2, "mapping": 3}
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates")
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -120,14 +121,14 @@ def prepare(
     dry_run: bool = typer.Option(False, "--dry-run"),
     local: bool = typer.Option(False, "--local", help="Run Chai directly instead of submitting through LSF."),
 ) -> None:
-    """Prepare implemented stages through Chai prediction and GLYCAM inspection."""
+    """Prepare implemented stages through glycan coordinate transfer and hydrogen repair."""
     try:
         cfg = load_config(config, check_files=True)
         _validate_prepare_stage_bounds(from_stage, through)
         workspace = _phase2_workspace(config)
 
         start_stage = from_stage or "chai"
-        end_stage = through or "mapping"
+        end_stage = through or "coordinates"
 
         if start_stage == "chai":
             chai_done = workspace / "01_chai" / ".done"
@@ -152,7 +153,7 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        if start_stage in {"chai", "glycam"} and end_stage in {"glycam", "mapping"}:
+        if start_stage in {"chai", "glycam"} and end_stage in {"glycam", "mapping", "coordinates"}:
             glycam_done = workspace / "02_prepare" / "glycam" / ".done"
             if not glycam_done.is_file():
                 if dry_run:
@@ -164,12 +165,24 @@ def prepare(
                 typer.echo(f"GLYCAM inspection already complete: {glycam_done}")
                 return
 
-        if end_stage == "mapping":
-            if dry_run:
-                typer.echo("Chai-to-GLYCAM mapping is a local deterministic stage; --dry-run does not execute it.")
+        if start_stage in {"chai", "glycam", "mapping"} and end_stage in {"mapping", "coordinates"}:
+            mapping_done = workspace / "02_prepare" / "mapping" / ".done"
+            if not mapping_done.is_file():
+                if dry_run:
+                    typer.echo("Chai-to-GLYCAM mapping is a local deterministic stage; --dry-run does not execute it.")
+                    return
+                result = map_chai_to_glycam(cfg, workspace=workspace)
+                typer.echo(f"Chai-to-GLYCAM mapping complete: {result.mapping_path}")
+            elif end_stage == "mapping":
+                typer.echo(f"Chai-to-GLYCAM mapping already complete: {mapping_done}")
                 return
-            result = map_chai_to_glycam(cfg, workspace=workspace)
-            typer.echo(f"Chai-to-GLYCAM mapping complete: {result.mapping_path}")
+
+        if end_stage == "coordinates":
+            if dry_run:
+                typer.echo("Coordinate transfer is a local deterministic stage; --dry-run does not execute it.")
+                return
+            result = transfer_glycan_coordinates(cfg, workspace=workspace)
+            typer.echo(f"Glycan coordinate transfer complete: {result.aligned_off_path}")
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
 

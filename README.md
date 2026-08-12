@@ -199,3 +199,25 @@ validation.json
 No coordinates, GLYCAM atom types, charges, residue identities, or connectivity are modified in this phase. The mapping TSV is the auditable input to Phase 5 coordinate transfer.
 
 The synthetic GLYCAM ZIP shipped under `examples/` exists only so Phase 0/1 configuration tests have a file to validate. Phase 3 now detects that fixture explicitly and instructs the user to replace it with the real, unmodified GLYCAM-Web ZIP instead of reporting a generic missing-OFF-unit error.
+
+## Phase 5: coordinate transfer and glycan hydrogen repair
+
+After the Phase 4 mapping is validated, run the local deterministic coordinate-transfer stage with:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --from coordinates --through coordinates
+```
+
+Phase 5 starts from the authoritative GLYCAM-Web `structure.off`. Every mapped GLYCAM heavy-atom coordinate is replaced by its corresponding Chai heavy-atom coordinate; atom names, atom types, charges, residue identities, connectivity, and all other OFF metadata are preserved. Hydrogens are then moved using parent-centered local heavy-atom frames. Carbon centers with exactly three heavy neighbors and one hydrogen are rebuilt explicitly in the missing tetrahedral direction while retaining the original GLYCAM C-H bond length. This special reconstruction is not applied to methyl, hydroxyl, amide, or other hydrogen environments.
+
+Outputs are written under `02_prepare/coordinate_transfer/`:
+
+```text
+glycan_aligned.off
+atom_mapping.tsv
+tetrahedral_hydrogen_repairs.tsv
+hydrogen_validation.json
+.done
+```
+
+The stage fails closed if the Phase 4 mapping is incomplete, an OFF hydrogen has invalid connectivity, any coordinate becomes non-finite, the aligned OFF changes topology/parameters, a mapped heavy coordinate is not preserved on serialization, or an X-H bond length changes beyond tolerance.

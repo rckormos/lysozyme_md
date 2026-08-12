@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lyso-md"
-version = "0.4.0"
+version = "0.5.0"
 description = "Restartable FASTA-to-MD pipeline scaffolding for holo human lysozyme C designs"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ dependencies = [
   "rdkit>=2024.3",
   "gemmi>=0.6,<1",
   "networkx>=3.2,<4",
+  "numpy>=1.26,<3",
 ]
 
 [project.optional-dependencies]
