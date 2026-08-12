@@ -24,6 +24,7 @@ class ChaiConfig(StrictModel):
     command: str = "chai-lab fold"
     mamba_init: str | None = "/home/rkormos/miniforge3/etc/profile.d/mamba.sh"
     mamba_env: str | None = "env_chai"
+    walltime: str = Field(default="06:00", pattern=r"^\d{1,3}:\d{2}$")
 
 
 class GlycamConfig(StrictModel):

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -21,6 +23,15 @@ class ChaiResult:
     stage_dir: Path
     selected_pdb: Path | None
     validation_path: Path
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class ChaiSubmission:
+    stage_dir: Path
+    script_path: Path
+    submission_path: Path
+    job_id: str | None
     dry_run: bool
 
 
@@ -59,6 +70,45 @@ def build_chai_shell_command(cfg: PipelineConfig, input_fasta: Path, output_dir:
     command = f"{c.command} {shlex.quote(str(input_fasta))} {shlex.quote(str(output_dir))}"
     parts.append(command)
     return " && ".join(parts)
+
+
+def build_chai_lsf_script(cfg: PipelineConfig, *, workspace: Path, pipeline_executable: str) -> str:
+    """Render the Phase 2 LSF worker script.
+
+    The batch job itself runs with the lyso-md interpreter/environment.  The
+    worker activates the separate Chai mamba environment only around the
+    chai-lab subprocess, then returns to Python for validation and sentinel
+    creation.
+    """
+    scheduler = cfg.scheduler
+    config_path = (workspace / "config.yaml").resolve()
+    logs_dir = (workspace / "logs").resolve()
+    worker = " ".join(
+        [
+            shlex.quote(pipeline_executable),
+            "_chai-worker",
+            shlex.quote(str(config_path)),
+        ]
+    )
+    return "\n".join(
+        [
+            "#!/bin/bash",
+            f"#BSUB -P {scheduler.project}",
+            f"#BSUB -J {cfg.name}_chai",
+            f"#BSUB -q {scheduler.gpu_queue}",
+            f"#BSUB -n {scheduler.cores}",
+            f"#BSUB -W {cfg.chai.walltime}",
+            f'#BSUB -gpu "{scheduler.gpu_resource}"',
+            f'#BSUB -R "rusage[mem={scheduler.memory}]"',
+            f"#BSUB -oo {logs_dir}/chai.%J.out",
+            f"#BSUB -eo {logs_dir}/chai.%J.err",
+            "",
+            "set -euo pipefail",
+            f"test -f {shlex.quote(str(config_path))}",
+            worker,
+            "",
+        ]
+    )
 
 
 def _convert_cif_to_pdb(cif_path: Path, pdb_path: Path, ligand_resname: str) -> None:
@@ -121,9 +171,10 @@ def validate_chai_pdb(pdb_path: Path, *, expected_residues: int, ligand_resname:
     return checks
 
 
-def run_chai(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> ChaiResult:
+def _prepare_chai_stage(cfg: PipelineConfig, *, workspace: Path) -> tuple[Path, Path, Path, Path, Path, int, str]:
     stage = workspace / "01_chai"
     stage.mkdir(parents=True, exist_ok=True)
+    (workspace / "logs").mkdir(parents=True, exist_ok=True)
     input_fasta = stage / "chai_input.fasta"
     output_dir = stage / "chai_output"
     log_path = stage / "chai.log"
@@ -138,6 +189,92 @@ def run_chai(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> 
     expected = ligand_heavy_atom_count(cfg.chai.glycan_smiles)
     if cfg.glycam.expected_heavy_atoms is not None and expected != cfg.glycam.expected_heavy_atoms:
         raise ValueError(f"SMILES heavy-atom count {expected} does not match glycam.expected_heavy_atoms {cfg.glycam.expected_heavy_atoms}")
+    return stage, input_fasta, output_dir, log_path, validation_path, expected, command
+
+
+def submit_chai(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> ChaiSubmission:
+    """Prepare Phase 2 and submit its worker through LSF bsub."""
+    stage, _input_fasta, _output_dir, log_path, validation_path, expected, command = _prepare_chai_stage(cfg, workspace=workspace)
+    pipeline_executable = shutil.which("lyso-md")
+    if pipeline_executable is None:
+        raise RuntimeError("lyso-md executable is not available on $PATH")
+
+    script_path = stage / "chai.lsf"
+    submission_path = stage / "submission.json"
+    script = build_chai_lsf_script(cfg, workspace=workspace, pipeline_executable=pipeline_executable)
+    script_path.write_text(script, encoding="utf-8")
+
+    if dry_run:
+        validation_path.write_text(
+            json.dumps(
+                {
+                    "stage": "chai",
+                    "status": "dry_run",
+                    "command": command,
+                    "expected_ligand_heavy_atoms": expected,
+                    "lsf_script": str(script_path),
+                    "passed": False,
+                },
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+        )
+        log_path.write_text("DRY RUN: Chai was not submitted.\n" + command + "\n", encoding="utf-8")
+        submission_path.write_text(
+            json.dumps(
+                {
+                    "stage": "chai",
+                    "status": "dry_run",
+                    "submitted": False,
+                    "script": str(script_path),
+                    "stdout_pattern": str((workspace / "logs" / "chai.%J.out").resolve()),
+                    "stderr_pattern": str((workspace / "logs" / "chai.%J.err").resolve()),
+                },
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+        )
+        return ChaiSubmission(stage, script_path, submission_path, None, True)
+
+    proc = subprocess.run(["bsub"], input=script, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    output = proc.stdout or ""
+    if proc.returncode != 0:
+        submission_path.write_text(
+            json.dumps(
+                {"stage": "chai", "status": "submission_failed", "submitted": False, "bsub_output": output},
+                indent=2,
+                sort_keys=True,
+            ) + "\n"
+        )
+        raise RuntimeError(f"bsub failed with exit code {proc.returncode}; see {submission_path}")
+    match = re.search(r"Job <(\d+)>", output)
+    if not match:
+        raise RuntimeError(f"could not parse LSF job ID from bsub output: {output.strip()!r}")
+    job_id = match.group(1)
+    submission_path.write_text(
+        json.dumps(
+            {
+                "stage": "chai",
+                "status": "submitted",
+                "submitted": True,
+                "submitted_at": utc_now(),
+                "job_id": job_id,
+                "bsub_output": output.strip(),
+                "script": str(script_path),
+                "script_sha256": sha256_file(script_path),
+                "stdout": str((workspace / "logs" / f"chai.{job_id}.out").resolve()),
+                "stderr": str((workspace / "logs" / f"chai.{job_id}.err").resolve()),
+            },
+            indent=2,
+            sort_keys=True,
+        ) + "\n"
+    )
+    return ChaiSubmission(stage, script_path, submission_path, job_id, False)
+
+
+def run_chai(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> ChaiResult:
+    """Execute Chai directly in the current process; used by the LSF worker and --local."""
+    stage, input_fasta, output_dir, log_path, validation_path, expected, command = _prepare_chai_stage(cfg, workspace=workspace)
     if dry_run:
         payload = {"stage":"chai","status":"dry_run","command":command,"expected_ligand_heavy_atoms":expected,"passed":False}
         validation_path.write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n")
@@ -147,7 +284,10 @@ def run_chai(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> 
         shutil.rmtree(output_dir)
     output_dir.mkdir()
     proc = subprocess.run(["bash","-lc",command], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    log_path.write_text(proc.stdout or "", encoding="utf-8")
+    captured = proc.stdout or ""
+    log_path.write_text(captured, encoding="utf-8")
+    if captured:
+        print(captured, end="" if captured.endswith("\n") else "\n")
     if proc.returncode != 0:
         raise RuntimeError(f"Chai command failed with exit code {proc.returncode}; see {log_path}")
     selected_cif = output_dir / f"pred.model_idx_{cfg.chai.model_index}.cif"
@@ -163,6 +303,18 @@ def run_chai(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> 
     validation_path.write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n")
     if not checks["passed"]:
         raise RuntimeError(f"Chai output validation failed; see {validation_path}")
-    done = {"stage":"chai","status":"done","completed_at":utc_now(),"pipeline_version":__version__,"input_sha256":sha256_file(input_fasta),"selected_cif_sha256":sha256_file(selected_cif),"selected_pdb_sha256":sha256_file(selected_pdb),"validation_sha256":sha256_file(validation_path),"validation":checks}
+    done = {
+        "stage":"chai",
+        "status":"done",
+        "completed_at":utc_now(),
+        "pipeline_version":__version__,
+        "lsf_job_id": os.environ.get("LSB_JOBID"),
+        "input_sha256":sha256_file(input_fasta),
+        "selected_cif_sha256":sha256_file(selected_cif),
+        "selected_pdb_sha256":sha256_file(selected_pdb),
+        "validation_sha256":sha256_file(validation_path),
+        "validation":checks,
+    }
+    sentinel = stage / ".done"
     sentinel.write_text(json.dumps(done, indent=2, sort_keys=True)+"\n")
     return ChaiResult(stage, selected_pdb, validation_path, False)

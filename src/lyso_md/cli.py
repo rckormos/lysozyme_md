@@ -8,7 +8,7 @@ import typer
 from pydantic import ValidationError
 
 from .config import load_config
-from .chai import run_chai
+from .chai import run_chai, submit_chai
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -87,33 +87,51 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
     typer.echo(f"{name} is a Phase 0 stub; execution is implemented in later phases.", err=True)
 
 
+def _validate_phase2_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
+    if from_stage not in (None, "chai"):
+        raise ValueError("Phase 2 supports --from chai only")
+    if through not in (None, "chai"):
+        raise ValueError("Phase 2 supports --through chai only")
+
+
+def _phase2_workspace(config: Path) -> Path:
+    workspace = config.parent.resolve()
+    if not (workspace / "manifest.json").is_file():
+        raise ValueError("Phase 2 must be run with the initialized workspace config.yaml")
+    return workspace
+
+
 @app.command()
 def prepare(
     config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
     from_stage: Optional[str] = typer.Option(None, "--from"),
     through: Optional[str] = typer.Option(None, "--through"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    local: bool = typer.Option(False, "--local", help="Run Chai directly instead of submitting through LSF."),
 ) -> None:
-    """Run implemented preparation stages; Phase 2 currently implements Chai only."""
+    """Prepare/submit implemented stages; Phase 2 currently implements Chai only."""
     try:
         cfg = load_config(config, check_files=True)
-        if from_stage not in (None, "chai"):
-            raise ValueError("Phase 2 supports --from chai only")
-        if through not in (None, "chai"):
-            raise ValueError("Phase 2 supports --through chai only")
-        workspace = config.parent.resolve()
-        if not (workspace / "manifest.json").is_file():
-            raise ValueError("prepare must be run with the initialized workspace config.yaml")
+        _validate_phase2_stage_bounds(from_stage, through)
+        workspace = _phase2_workspace(config)
         if not cfg.chai.enabled:
             typer.echo("Chai stage disabled by configuration")
             return
-        result = run_chai(cfg, workspace=workspace, dry_run=dry_run)
+        if local:
+            result = run_chai(cfg, workspace=workspace, dry_run=dry_run)
+            if result.dry_run:
+                typer.echo(f"Prepared local Chai dry run: {result.stage_dir}")
+            else:
+                typer.echo(f"Chai stage complete: {result.selected_pdb}")
+            return
+        submission = submit_chai(cfg, workspace=workspace, dry_run=dry_run)
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
-    if result.dry_run:
-        typer.echo(f"Prepared Chai dry run: {result.stage_dir}")
+    if submission.dry_run:
+        typer.echo(f"Prepared Chai LSF dry run: {submission.script_path}")
     else:
-        typer.echo(f"Chai stage complete: {result.selected_pdb}")
+        typer.echo(f"Chai stage submitted: job {submission.job_id}")
+        typer.echo(f"Submission metadata: {submission.submission_path}")
 
 
 @app.command()
@@ -123,8 +141,36 @@ def submit(
     through: Optional[str] = typer.Option(None, "--through"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Submit LSF stages (stub in Phases 0-1)."""
-    _stub("submit", config, from_stage, through, dry_run)
+    """Submit implemented stages through LSF; Phase 2 currently implements Chai only."""
+    try:
+        cfg = load_config(config, check_files=True)
+        _validate_phase2_stage_bounds(from_stage, through)
+        workspace = _phase2_workspace(config)
+        if not cfg.chai.enabled:
+            typer.echo("Chai stage disabled by configuration")
+            return
+        submission = submit_chai(cfg, workspace=workspace, dry_run=dry_run)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    if submission.dry_run:
+        typer.echo(f"Prepared Chai LSF dry run: {submission.script_path}")
+    else:
+        typer.echo(f"Chai stage submitted: job {submission.job_id}")
+        typer.echo(f"Submission metadata: {submission.submission_path}")
+
+
+@app.command("_chai-worker", hidden=True)
+def chai_worker(
+    config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+) -> None:
+    """Internal LSF worker: execute Chai, validate output, and write .done."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        result = run_chai(cfg, workspace=workspace, dry_run=False)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    typer.echo(f"Chai stage complete: {result.selected_pdb}")
 
 
 @app.command()

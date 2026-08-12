@@ -4,7 +4,14 @@ from pathlib import Path
 
 import pytest
 
-from lyso_md.chai import build_chai_shell_command, ligand_heavy_atom_count, validate_chai_pdb, write_chai_input
+from lyso_md.chai import (
+    build_chai_lsf_script,
+    build_chai_shell_command,
+    ligand_heavy_atom_count,
+    submit_chai,
+    validate_chai_pdb,
+    write_chai_input,
+)
 from lyso_md.config import load_config
 
 
@@ -23,6 +30,7 @@ chai:
   command: chai-lab fold
   mamba_init: /opt/mamba.sh
   mamba_env: env_chai
+  walltime: "06:00"
 glycam:
   bundle: bundle.zip
   expected_heavy_atoms: 3
@@ -73,3 +81,74 @@ def test_validate_pdb(tmp_path):
 def test_invalid_smiles_fails():
     with pytest.raises(ValueError):
         ligand_heavy_atom_count("not a smiles (((")
+
+
+
+def test_build_lsf_script(tmp_path):
+    cfg = load_config(_write_config(tmp_path))
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "logs").mkdir()
+    (workspace / "config.yaml").write_text("# fixture\n")
+    script = build_chai_lsf_script(cfg, workspace=workspace, pipeline_executable="/opt/lyso/bin/lyso-md")
+    assert "#BSUB -P p" in script
+    assert "#BSUB -J test_design_chai" in script
+    assert "#BSUB -q gpu" in script
+    assert "#BSUB -W 06:00" in script
+    assert '#BSUB -gpu "num=1/host"' in script
+    assert '#BSUB -R "rusage[mem=32GB]"' in script
+    assert f"#BSUB -oo {workspace.resolve()}/logs/chai.%J.out" in script
+    assert f"#BSUB -eo {workspace.resolve()}/logs/chai.%J.err" in script
+    assert "set -euo pipefail" in script
+    assert "/opt/lyso/bin/lyso-md _chai-worker" in script
+
+
+def test_submit_chai_uses_bsub_and_records_job_id(tmp_path, monkeypatch):
+    cfg_path = _write_config(tmp_path)
+    cfg = load_config(cfg_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "logs").mkdir()
+    (workspace / "config.yaml").write_text(cfg_path.read_text())
+
+    monkeypatch.setattr("lyso_md.chai.shutil.which", lambda name: "/opt/lyso/bin/lyso-md")
+
+    class Proc:
+        returncode = 0
+        stdout = "Job <123456> is submitted to queue <gpu>.\n"
+
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        return Proc()
+
+    monkeypatch.setattr("lyso_md.chai.subprocess.run", fake_run)
+    result = submit_chai(cfg, workspace=workspace, dry_run=False)
+    assert result.job_id == "123456"
+    assert calls[0][0] == ["bsub"]
+    assert "#BSUB -q gpu" in calls[0][1]["input"]
+    metadata = result.submission_path.read_text()
+    assert '"job_id": "123456"' in metadata
+    assert '"status": "submitted"' in metadata
+    assert not (workspace / "01_chai" / ".done").exists()
+
+
+def test_submit_chai_dry_run_does_not_call_bsub(tmp_path, monkeypatch):
+    cfg_path = _write_config(tmp_path)
+    cfg = load_config(cfg_path)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "logs").mkdir()
+    (workspace / "config.yaml").write_text(cfg_path.read_text())
+    monkeypatch.setattr("lyso_md.chai.shutil.which", lambda name: "/opt/lyso/bin/lyso-md")
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("bsub must not be called during --dry-run")
+
+    monkeypatch.setattr("lyso_md.chai.subprocess.run", fail_run)
+    result = submit_chai(cfg, workspace=workspace, dry_run=True)
+    assert result.dry_run is True
+    assert result.job_id is None
+    assert (workspace / "01_chai" / "chai.lsf").is_file()
+    assert not (workspace / "01_chai" / ".done").exists()

@@ -11,6 +11,7 @@ chai:
   command: chai-lab fold
   mamba_init: /home/rkormos/miniforge3/etc/profile.d/mamba.sh
   mamba_env: env_chai
+  walltime: "06:00"
   glycan_smiles: >
     CC(=O)N[C@H]1[C@H](O)O[C@H](CO)[C@@H](O2)[C@@H]1O.
     C[C@@H](O[C@H]3[C@H](O4)[C@@H](CO)O[C@@H]2[C@@H]3NC(C)=O)C(O)=O.

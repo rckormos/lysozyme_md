@@ -1,6 +1,6 @@
 # lyso-md
 
-`lyso-md` is a restartable FASTA-to-MD pipeline for a narrow family of human lysozyme C designs bound to a fixed peptidoglycan ligand. This repository currently implements **Phase 0 (project/config/CLI scaffolding)** and **Phase 1 (external design-workspace initialization)**. Molecular transformations and HPC execution are intentionally stubbed until later phases.
+`lyso-md` is a restartable FASTA-to-MD pipeline for a narrow family of human lysozyme C designs bound to a fixed peptidoglycan ligand. This repository currently implements **Phases 0-2**, including external workspace initialization and LSF-submitted Chai-1 holo prediction. Amber/GLYCAM molecular preparation remains deferred to later phases.
 
 ## Design principles
 
@@ -11,7 +11,7 @@
 - Stage completion sentinels are JSON metadata files named `.done`; Phase 1 writes `.lyso-md/init/.done`.
 - `--force` never deletes an existing workspace: it renames it to a timestamped sibling backup before creating a new one.
 - Amber 22 and CPPTRAJ are external cluster dependencies expected on `$PATH` after `module load amber/22_rhel8`.
-- Chai-1 will later be invoked after:
+- Chai-1 is invoked inside the Phase 2 LSF worker after:
 
   ```bash
   source /home/rkormos/miniforge3/etc/profile.d/mamba.sh
@@ -106,29 +106,22 @@ design_042.backup-20260811T210000Z/
 
 and a fresh `design_042/` is created. Existing results are never silently removed.
 
-## CLI in Phases 0-1
+## CLI through Phase 2
 
 Implemented:
 
 ```bash
 lyso-md init CONFIG [--workspace-root DIR] [--force]
 lyso-md validate-config CONFIG
+lyso-md prepare CONFIG [--from chai] [--through chai] [--dry-run] [--local]
+lyso-md submit CONFIG [--from chai] [--through chai] [--dry-run]
 ```
 
-Reserved convenience-wrapper commands (validated stubs for now):
+`prepare` and `submit` are convenience wrappers with `--from` / `--through`. In Phase 2, both submit Chai through LSF by default. `prepare --local` is the explicit direct-execution escape hatch for development. `status` and `analyze` remain stubs.
 
-```bash
-lyso-md prepare CONFIG [--from STAGE] [--through STAGE] [--dry-run]
-lyso-md submit CONFIG [--from STAGE] [--through STAGE] [--dry-run]
-lyso-md status CONFIG
-lyso-md analyze CONFIG
-```
+## LSF execution
 
-`prepare` and `submit` are intentionally modeled as convenience wrappers with `--from` / `--through`; later phases will fill in their stage graph.
-
-## LSF assumptions for later phases
-
-The configuration exposes the stable cluster knobs (`project`, GPU queue/resource, memory, cores, and per-production-chunk walltime). Job names and stdout/stderr paths will be generated from design/stage names under the design's `logs/` directory. The implementation will target LSF directly rather than introducing a generic scheduler abstraction.
+LSF is targeted directly rather than through a generic scheduler abstraction. The configuration exposes project, GPU queue/resource, memory, and cores; `chai.walltime` controls the Chai allocation and defaults to `06:00`. Phase 2 writes `01_chai/chai.lsf`, submits it with `bsub`, records the returned job ID in `01_chai/submission.json`, and routes scheduler output to `logs/chai.%J.out` and `logs/chai.%J.err`.
 
 ## Regression assets
 
@@ -142,14 +135,22 @@ Normal Phase 0/1 tests require neither Amber, Chai, nor those real scientific as
 
 ## Phase 2: Chai-1 holo prediction
 
-Phase 2 is invoked through the preparation convenience wrapper from an initialized workspace:
+Phase 2 is invoked from an initialized workspace. The normal path is an LSF submission:
 
 ```bash
 lyso-md prepare /path/to/workspace/config.yaml --through chai --dry-run
 lyso-md prepare /path/to/workspace/config.yaml --through chai
+# equivalent submission entry point:
+lyso-md submit /path/to/workspace/config.yaml --through chai
 ```
 
-The stage writes `01_chai/chai_input.fasta`, `expected_command.sh`, `chai.log`, `validation.json`, the selected `pred.model_idx_N.pdb`, and `.done` only after validation succeeds. Raw Chai output, including the CIF, is preserved under `01_chai/chai_output/`.
+Direct execution is deliberately explicit:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --through chai --local
+```
+
+The stage writes `01_chai/chai_input.fasta`, `expected_command.sh`, `chai.lsf`, `submission.json`, `chai.log`, `validation.json`, the selected `pred.model_idx_N.pdb`, and `.done` only after the batch worker completes validation. Raw Chai output, including the CIF, is preserved under `01_chai/chai_output/`. LSF stdout/stderr are written under `logs/` with the actual job ID in the filename.
 
 By default the generated shell command uses the St. Jude cluster setup supplied for this project:
 
@@ -159,6 +160,6 @@ mamba activate env_chai
 chai-lab fold INPUT_FASTA OUTPUT_DIR
 ```
 
-The command, mamba initialization script, and environment name are configurable in the `chai:` section. Dry-run mode writes the exact command and inputs but does not execute Chai and never writes `.done`.
+The command, mamba initialization script, environment name, and Chai walltime are configurable in the `chai:` section. Dry-run mode writes the exact command, inputs, and LSF script but does not call `bsub` and never writes `.done`.
 
 Successful execution fails closed unless the selected model exists, the protein residue count matches configuration, the ligand is present, the ligand heavy-atom count matches the RDKit count from the configured stereospecific SMILES, all coordinates are finite, and PDB atom serials are unique.
