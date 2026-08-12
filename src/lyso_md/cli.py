@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from .config import load_config
 from .chai import run_chai, submit_chai
+from .glycam import inspect_glycam_bundle
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -87,11 +88,20 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
     typer.echo(f"{name} is a Phase 0 stub; execution is implemented in later phases.", err=True)
 
 
-def _validate_phase2_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    if from_stage not in (None, "chai"):
-        raise ValueError("Phase 2 supports --from chai only")
-    if through not in (None, "chai"):
-        raise ValueError("Phase 2 supports --through chai only")
+def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
+    allowed = (None, "chai", "glycam")
+    if from_stage not in allowed:
+        raise ValueError("implemented prepare stages are: chai, glycam")
+    if through not in allowed:
+        raise ValueError("implemented prepare stages are: chai, glycam")
+    order = {"chai": 1, "glycam": 2}
+    if from_stage is not None and through is not None and order[from_stage] > order[through]:
+        raise ValueError("--from stage must not come after --through stage")
+
+
+def _validate_submit_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
+    if from_stage not in (None, "chai") or through not in (None, "chai"):
+        raise ValueError("Phase 3 submit currently supports the LSF Chai stage only; GLYCAM inspection is local")
 
 
 def _phase2_workspace(config: Path) -> Path:
@@ -109,29 +119,46 @@ def prepare(
     dry_run: bool = typer.Option(False, "--dry-run"),
     local: bool = typer.Option(False, "--local", help="Run Chai directly instead of submitting through LSF."),
 ) -> None:
-    """Prepare/submit implemented stages; Phase 2 currently implements Chai only."""
+    """Prepare implemented stages through Chai prediction and GLYCAM inspection."""
     try:
         cfg = load_config(config, check_files=True)
-        _validate_phase2_stage_bounds(from_stage, through)
+        _validate_prepare_stage_bounds(from_stage, through)
         workspace = _phase2_workspace(config)
-        if not cfg.chai.enabled:
-            typer.echo("Chai stage disabled by configuration")
-            return
-        if local:
-            result = run_chai(cfg, workspace=workspace, dry_run=dry_run)
-            if result.dry_run:
-                typer.echo(f"Prepared local Chai dry run: {result.stage_dir}")
-            else:
-                typer.echo(f"Chai stage complete: {result.selected_pdb}")
-            return
-        submission = submit_chai(cfg, workspace=workspace, dry_run=dry_run)
+
+        start_stage = from_stage or "chai"
+        end_stage = through or "glycam"
+
+        if start_stage == "chai":
+            chai_done = workspace / "01_chai" / ".done"
+            if not chai_done.is_file():
+                if not cfg.chai.enabled:
+                    typer.echo("Chai stage disabled by configuration")
+                elif local:
+                    result = run_chai(cfg, workspace=workspace, dry_run=dry_run)
+                    if result.dry_run:
+                        typer.echo(f"Prepared local Chai dry run: {result.stage_dir}")
+                    else:
+                        typer.echo(f"Chai stage complete: {result.selected_pdb}")
+                else:
+                    submission = submit_chai(cfg, workspace=workspace, dry_run=dry_run)
+                    if submission.dry_run:
+                        typer.echo(f"Prepared Chai LSF dry run: {submission.script_path}")
+                    else:
+                        typer.echo(f"Chai stage submitted: job {submission.job_id}")
+                        typer.echo(f"Submission metadata: {submission.submission_path}")
+                    return
+            elif end_stage == "chai":
+                typer.echo(f"Chai stage already complete: {chai_done}")
+                return
+
+        if end_stage == "glycam":
+            if dry_run:
+                typer.echo("GLYCAM inspection is a local deterministic stage; --dry-run does not execute it.")
+                return
+            result = inspect_glycam_bundle(cfg, workspace=workspace)
+            typer.echo(f"GLYCAM inspection complete: {result.summary_path}")
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
-    if submission.dry_run:
-        typer.echo(f"Prepared Chai LSF dry run: {submission.script_path}")
-    else:
-        typer.echo(f"Chai stage submitted: job {submission.job_id}")
-        typer.echo(f"Submission metadata: {submission.submission_path}")
 
 
 @app.command()
@@ -141,10 +168,10 @@ def submit(
     through: Optional[str] = typer.Option(None, "--through"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
-    """Submit implemented stages through LSF; Phase 2 currently implements Chai only."""
+    """Submit implemented LSF stages; Phase 3 GLYCAM inspection runs locally via prepare."""
     try:
         cfg = load_config(config, check_files=True)
-        _validate_phase2_stage_bounds(from_stage, through)
+        _validate_submit_stage_bounds(from_stage, through)
         workspace = _phase2_workspace(config)
         if not cfg.chai.enabled:
             typer.echo("Chai stage disabled by configuration")

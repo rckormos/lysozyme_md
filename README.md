@@ -163,3 +163,17 @@ chai-lab fold INPUT_FASTA OUTPUT_DIR
 The command, mamba initialization script, environment name, and Chai walltime are configurable in the `chai:` section. Dry-run mode writes the exact command, inputs, and LSF script but does not call `bsub` and never writes `.done`.
 
 Successful execution fails closed unless the selected model exists, the protein residue count matches configuration, the ligand is present, the ligand heavy-atom count matches the RDKit count from the configured stereospecific SMILES, all coordinates are finite, and PDB atom serials are unique.
+
+## Phase 3: GLYCAM-Web bundle inspection
+
+Phase 3 is a deterministic local preparation step; it does not require LSF, Amber, or Chai. After the Chai stage has completed, run:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --from glycam --through glycam
+```
+
+The original configured GLYCAM-Web ZIP remains untouched. Phase 3 safely extracts it under `02_prepare/glycam/extracted/`, ignoring macOS metadata entries while rejecting path traversal and ZIP symlinks. It locates `structure.off` and the two configured frcmod files by basename and fails if any required file is missing or ambiguous.
+
+The configured OFF unit (normally `CONDENSEDSEQUENCE`) is parsed into atom names, atom types, charges, atomic numbers, residue assignments, coordinates, residue metadata, and connectivity. `02_prepare/glycam/glycam_summary.json` records this metadata plus source/output SHA256 hashes and configured count checks. `02_prepare/glycam/.done` is written only after the unit, required files, atom count, residue count, and OFF connectivity validate successfully.
+
+Phase 3 never modifies `structure.off` or attempts to parameterize MurNAc from stock GLYCAM. The extracted GLYCAM-Web definitions remain the authoritative topology source for later phases.
