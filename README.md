@@ -177,3 +177,25 @@ The original configured GLYCAM-Web ZIP remains untouched. Phase 3 safely extract
 The configured OFF unit (normally `CONDENSEDSEQUENCE`) is parsed into atom names, atom types, charges, atomic numbers, residue assignments, coordinates, residue metadata, and connectivity. `02_prepare/glycam/glycam_summary.json` records this metadata plus source/output SHA256 hashes and configured count checks. `02_prepare/glycam/.done` is written only after the unit, required files, atom count, residue count, and OFF connectivity validate successfully.
 
 Phase 3 never modifies `structure.off` or attempts to parameterize MurNAc from stock GLYCAM. The extracted GLYCAM-Web definitions remain the authoritative topology source for later phases.
+
+## Phase 4: Chai-to-GLYCAM heavy-atom mapping
+
+After validated Chai prediction and GLYCAM inspection, run the local deterministic mapping stage with:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --from mapping --through mapping
+```
+
+Phase 4 treats the configured stereospecific SMILES as the Chai ligand atom-identity graph and the GLYCAM-Web OFF unit as the authoritative topology/parameter graph. It validates Chai/SMILES/GLYCAM heavy-atom counts and element counts, requires the Chai ligand atom order to preserve the input SMILES element sequence, and performs an element-labelled NetworkX graph isomorphism against the GLYCAM heavy-atom graph. Candidate automorphisms are scored by local heavy-atom geometry. Parameter-identical graph-equivalent atoms (for example the GLYCAM carboxylate `O3A`/`O3B` pairs) are canonicalized deterministically only when they have the same residue, atom type, charge, degree, and neighbor set; ambiguity involving non-equivalent GLYCAM atoms fails closed.
+
+Outputs are written under `02_prepare/mapping/`:
+
+```text
+atom_mapping.tsv
+validation.json
+.done
+```
+
+No coordinates, GLYCAM atom types, charges, residue identities, or connectivity are modified in this phase. The mapping TSV is the auditable input to Phase 5 coordinate transfer.
+
+The synthetic GLYCAM ZIP shipped under `examples/` exists only so Phase 0/1 configuration tests have a file to validate. Phase 3 now detects that fixture explicitly and instructs the user to replace it with the real, unmodified GLYCAM-Web ZIP instead of reporting a generic missing-OFF-unit error.

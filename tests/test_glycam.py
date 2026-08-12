@@ -140,3 +140,10 @@ def test_inspect_bundle_fails_closed_on_expected_count_mismatch(tmp_path: Path) 
     with pytest.raises(ValueError, match="heavy-atom count"):
         inspect_glycam_bundle(cfg, workspace=workspace)
     assert not (workspace / "02_prepare" / "glycam" / ".done").exists()
+
+
+def test_synthetic_phase01_fixture_has_explicit_error(tmp_path: Path) -> None:
+    off = tmp_path / "structure.off"
+    off.write_text("# Synthetic Phase 0/1 existence fixture only; not scientifically usable.\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="synthetic Phase 0/1 existence fixture"):
+        parse_off_unit(off, "CONDENSEDSEQUENCE")

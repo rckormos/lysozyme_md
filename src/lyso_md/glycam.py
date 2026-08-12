@@ -155,7 +155,15 @@ def parse_off_unit(path: Path, unit_name: str) -> OffUnit:
     required = {"atoms", "residues", "positions", "connectivity"}
     missing = required.difference(sections)
     if missing:
-        available = ", ".join(list_off_units(path)) or "none"
+        available_units = list_off_units(path)
+        if not available_units:
+            head = Path(path).read_text(encoding="utf-8", errors="replace")[:2048].lower()
+            if "synthetic phase 0/1 existence fixture" in head or "not scientifically usable" in head:
+                raise ValueError(
+                    "the configured GLYCAM bundle is the bundled synthetic Phase 0/1 existence fixture; "
+                    "replace glycam.bundle with the real, unmodified GLYCAM-Web ZIP before running Phase 3"
+                )
+        available = ", ".join(available_units) or "none"
         raise ValueError(
             f"OFF unit {unit_name!r} is missing required section(s) {sorted(missing)}; available units: {available}"
         )
