@@ -349,3 +349,41 @@ Use:
 lyso-md prepare /path/to/workspace/config.yaml --from minimize --through minimize --dry-run
 lyso-md prepare /path/to/workspace/config.yaml --from minimize --through minimize
 ```
+
+## Phase 11: restrained NVT heating
+
+After the Phase 10 all-system minimization checkpoint, submit the restrained NVT heating stage with:
+
+```bash
+module load amber/22_rhel8
+lyso-md prepare /path/to/workspace/config.yaml --from heat --through heat --dry-run
+lyso-md prepare /path/to/workspace/config.yaml --from heat --through heat
+```
+
+Phase 11 is a GPU LSF job using `pmemd.cuda`. It starts from the Phase 10 all-system minimization restart and uses that same restart as the positional-restraint reference. The fixed protocol heats fresh velocities from 10 K to 300 K over the configured 100 ps, with a 2 fs timestep, Langevin thermostat (`ntt=3`, `gamma_ln=5.0`), SHAKE on bonds to hydrogen, 5 kcal/mol/A^2 heavy-solute restraints, NVT periodic dynamics, and `iwrap=0`.
+
+The generated Amber input is equivalent to:
+
+```text
+irest=0, ntx=1, nstlim=50000, dt=0.002,
+ntb=1, ntp=0, cut=9.0,
+ntt=3, gamma_ln=5.0, tempi=10.0, temp0=300.0,
+ntr=1, restraint_wt=5.0,
+restraintmask='(!:WAT,K+,Cl-)&(!@H=)',
+ntc=2, ntf=2, iwrap=0
+```
+
+The stage is submitted with an LSF `done(JOBID)` dependency on the Phase 10 all-system minimization when that job is still running. If Phase 10 already has its `.done` checkpoint, no scheduler dependency is needed.
+
+Outputs are written under `06_equilibrate/heat/`:
+
+```text
+heat.in
+heat.out
+heat.rst7
+heat.nc
+validation.json
+.done
+```
+
+Validation requires normal Amber completion, a finite final temperature in the 250-350 K range, finite restart coordinates, matching topology/restart atom counts, and absence of CUDA, SHAKE, NaN/Inf, vlimit, or fatal diagnostics. `.done` is written only after all checks pass.
