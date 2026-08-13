@@ -19,6 +19,7 @@ from .solvate import solvate_and_ionize
 from .minimize import prepare_minimization, run_minimization_worker
 from .heating import prepare_heating, run_heating_worker
 from .npt import prepare_npt_smoke, run_npt_smoke_worker
+from .equilibration import prepare_npt_equilibration, run_npt_equilibration_worker
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -98,12 +99,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate", "minimize", "heat", "npt-smoke")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate", "minimize", "heat", "npt-smoke", "npt-equilibrate")
     if from_stage not in allowed:
         raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize, heat, npt-smoke")
     if through not in allowed:
         raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize, heat, npt-smoke")
-    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11}
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11, "npt-equilibrate": 12}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -160,7 +161,7 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11}
+        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11, "npt-equilibrate": 12}
         start_num = stage_order[start_stage]
         end_num = stage_order[end_stage]
 
@@ -288,8 +289,23 @@ def prepare(
                 else:
                     typer.echo(f"Phase 12 NPT smoke test submitted: job {result.job_id}")
                     typer.echo(f"Submission metadata: {result.submission_path}")
-            else:
+                if end_stage == "npt-smoke":
+                    return
+            elif end_stage == "npt-smoke":
                 typer.echo(f"NPT smoke test already complete: {smoke_done}")
+                return
+
+        if start_num <= stage_order["npt-equilibrate"] <= end_num:
+            equil_done = workspace / "06_equilibrate" / "npt_equilibrate" / ".done"
+            if not equil_done.is_file():
+                result = prepare_npt_equilibration(cfg, workspace=workspace, dry_run=dry_run)
+                if result.dry_run:
+                    typer.echo(f"Prepared Phase 13 LSF NPT equilibration scripts: {result.stage}")
+                else:
+                    typer.echo(f"Phase 13 NPT equilibration submitted: jobs {', '.join(j for j in result.job_ids if j)}")
+                    typer.echo(f"Submission metadata: {result.submission_path}")
+            else:
+                typer.echo(f"NPT equilibration already complete: {equil_done}")
             return
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
@@ -336,6 +352,17 @@ def submit(
                 typer.echo(f"Prepared Phase 12 LSF NPT smoke-test script: {result.script_path}")
             else:
                 typer.echo(f"Phase 12 NPT smoke test submitted: job {result.job_id}")
+                typer.echo(f"Submission metadata: {result.submission_path}")
+            return
+        if from_stage == "npt-equilibrate" or through == "npt-equilibrate":
+            if from_stage != "npt-equilibrate" or through != "npt-equilibrate":
+                raise ValueError("Phase 13 submit requires --from npt-equilibrate --through npt-equilibrate")
+            workspace = _phase2_workspace(config)
+            result = prepare_npt_equilibration(cfg, workspace=workspace, dry_run=dry_run)
+            if result.dry_run:
+                typer.echo(f"Prepared Phase 13 LSF NPT equilibration scripts: {result.stage}")
+            else:
+                typer.echo(f"Phase 13 NPT equilibration submitted: jobs {', '.join(j for j in result.job_ids if j)}")
                 typer.echo(f"Submission metadata: {result.submission_path}")
             return
         _validate_submit_stage_bounds(from_stage, through)
@@ -393,6 +420,21 @@ def npt_smoke_worker(
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
     typer.echo("Phase 12 NPT smoke test complete")
+
+
+@app.command("_npt-equilibrate-worker", hidden=True)
+def npt_equilibrate_worker(
+    stage: str = typer.Argument(...),
+    config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+) -> None:
+    """Internal LSF worker for Phase 13 staged GPU NPT equilibration."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        run_npt_equilibration_worker(cfg, workspace=workspace, stage_name=stage)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    typer.echo(f"Phase 13 {stage} NPT equilibration complete")
 
 
 @app.command("_chai-worker", hidden=True)

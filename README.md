@@ -399,3 +399,25 @@ lyso-md prepare design_042/config.yaml --from npt-smoke --through npt-smoke
 The stage is a 5 ps conservative NPT smoke test using a 1 fs timestep, Berendsen barostat, `taup=5.0`, fresh 300 K velocities, 5 kcal/mol/A^2 heavy-solute restraints, and `iwrap=0`. The stage-start heating restart is used as both the coordinate input and restraint reference, preventing periodic-image restraint artifacts.
 
 The LSF job depends on the Phase 11 heating job when that job is still running. Validation requires normal Amber completion, finite temperature/density, a positive density, a reasonable step-0 restraint energy (below the pipeline smoke-test threshold), a valid restart, matching topology atom counts, and absence of explicit CUDA/SHAKE/vlimit/NaN/Inf failures. The `.done` sentinel is written only after validation succeeds.
+
+## Phase 13 — staged NPT equilibration
+
+After the Phase 12 NPT smoke-test checkpoint, submit three dependent GPU LSF jobs:
+
+1. 250 ps at 5 kcal/mol/A^2 heavy-solute restraints.
+2. 250 ps at 1 kcal/mol/A^2 heavy-solute restraints.
+3. 500 ps unrestrained.
+
+All stages use `pmemd.cuda`, a 2 fs timestep, NPT (`ntb=2`, `ntp=1`, `barostat=1`, `taup=5.0`), Langevin temperature control at the configured temperature, `iwrap=0`, and SHAKE on hydrogen bonds. The two restrained stages use the current stage-start restart as both `-c` and `-ref`; the free stage has `ntr=0` and no restraint mask.
+
+Use:
+
+```bash
+module load amber/22_rhel8
+lyso-md prepare /path/to/workspace/config.yaml --from npt-equilibrate --through npt-equilibrate --dry-run
+lyso-md prepare /path/to/workspace/config.yaml --from npt-equilibrate --through npt-equilibrate
+```
+
+The three jobs are chained with `done(JOBID)` dependencies. Each stage has its own `validation.json` and `.done` checkpoint under `06_equilibrate/npt_equilibrate/{restraint5,restraint1,free}/`. The aggregate `06_equilibrate/npt_equilibrate/.done` sentinel is written only by the successful unrestrained stage.
+
+Validation is section-aware and requires normal Amber completion, finite temperature/density, positive density, finite restart coordinates, matching topology/restart atom counts, and absence of explicit CUDA/SHAKE/vlimit/NaN/Inf/fatal diagnostics. No density-equilibrium threshold is imposed at this stage; the purpose is to establish the final equilibrated checkpoint before production.
