@@ -20,7 +20,7 @@ _FATAL_PATTERNS = (
     re.compile(r"\bNaN\b", re.IGNORECASE),
     re.compile(r"\bInf(?:inity)?\b", re.IGNORECASE),
     re.compile(r"\bSHAKE\s+(?:FAILURE|FAILED|FAIL|CANNOT|NOT\s+CONVERG|DID\s+NOT\s+CONVERG)", re.IGNORECASE),
-    re.compile(r"\bvlimit\b", re.IGNORECASE),
+    re.compile(r"\bvlimit\s+(?:exceeded|violation|failure|failed)\b", re.IGNORECASE),
     re.compile(r"\bFATAL\b", re.IGNORECASE),
 )
 _COMPLETION_MARKERS = ("5.  TIMINGS", "5. TIMINGS")
@@ -110,13 +110,34 @@ def _submit(script: str) -> tuple[str, str]:
 
 
 def _parse_final_temperature(text: str) -> float:
-    matches = _TEMP_EQUALS_RE.findall(text)
+    """Return the final dynamics temperature, excluding summary statistics.
+
+    Amber prints additional TEMP(K) records in the AVERAGES and RMS
+    FLUCTUATIONS sections after the final dynamics record.  The latter can
+    look like a temperature to a naive parser (for example, 1.83 K for an
+    RMS fluctuation), so only the primary dynamics section is considered.
+    """
+    section = text
+
+    for marker in (
+        "A V E R A G E S",
+        "A V E R A G E",
+        "R M S  F L U C T U A T I O N S",
+        "R M S F L U C T U A T I O N S",
+        "5.  TIMINGS",
+        "5. TIMINGS",
+    ):
+        position = section.find(marker)
+        if position >= 0:
+            section = section[:position]
+
+    matches = _TEMP_EQUALS_RE.findall(section)
     if matches:
         value = float(matches[-1].replace("D", "E").replace("d", "e"))
     else:
-        table = _TEMP_TABLE_RE.findall(text)
+        table = _TEMP_TABLE_RE.findall(section)
         if not table:
-            raise ValueError("pmemd.cuda output does not contain a parseable temperature")
+            raise ValueError("pmemd.cuda output does not contain a parseable final dynamics temperature")
         value = float(table[-1].replace("D", "E").replace("d", "e"))
     if not math.isfinite(value):
         raise ValueError("heating output contains a non-finite final temperature")

@@ -131,6 +131,31 @@ def test_worker_accepts_normal_shake_timing_line(tmp_path: Path, monkeypatch: py
     assert validation["checks"]["passed"] is True
 
 
+def test_worker_ignores_vlimit_configuration_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_config(_config(tmp_path))
+    ws = _workspace(tmp_path)
+    prepare_minimization(cfg, workspace=ws, dry_run=True)
+    script = tmp_path / "pmemd.cuda"
+    script.write_text(
+        "#!/bin/sh\n"
+        "cat > min.out <<'EOF'\n"
+        " t       =   0.00000, dt      =   0.00200, vlimit  =  -1.00000\n"
+        " FINAL RESULTS\n"
+        " 5000 -100.0 0.0100 0.1000 TEST 1\n"
+        "5.  TIMINGS\n"
+        "EOF\n"
+        "cat > min.rst7 <<'EOF'\n"
+        "minimized\n2\n  0.100000  0.200000  0.300000  1.100000  1.200000  1.300000\n"
+        "EOF\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    validation = run_minimization_worker(cfg, workspace=ws, worker="solvent")
+    assert validation["checks"]["passed"] is True
+
+
 def test_worker_fails_on_cuda_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = load_config(_config(tmp_path))
     ws = _workspace(tmp_path)

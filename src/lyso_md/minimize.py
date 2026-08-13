@@ -22,7 +22,7 @@ _FATAL_PATTERNS = (
     re.compile(r"\bNaN\b", re.IGNORECASE),
     re.compile(r"\bNAN\b", re.IGNORECASE),
     re.compile(r"\bSHAKE\s+(?:FAILURE|FAILED|FAIL|CANNOT|NOT\s+CONVERG|DID\s+NOT\s+CONVERG)", re.IGNORECASE),
-    re.compile(r"\bvlimit\b", re.IGNORECASE),
+    re.compile(r"\bvlimit\s+(?:exceeded|violation|failure|failed)\b", re.IGNORECASE),
     re.compile(r"\bFATAL\b", re.IGNORECASE),
 )
 _COMPLETION_MARKERS = ("FINAL RESULTS", "5.  TIMINGS", "5. TIMINGS")

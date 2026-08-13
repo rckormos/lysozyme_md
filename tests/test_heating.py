@@ -118,6 +118,29 @@ def _fake_pmemd_cuda(path: Path, *, temperature: float = 299.4, bad: bool = Fals
     script.chmod(0o755)
 
 
+
+
+def test_parse_final_temperature_ignores_amber_average_and_rms_sections() -> None:
+    from lyso_md.heating import _parse_final_temperature
+
+    text = """
+ FINAL RESULTS
+
+ NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER
+ 50000      -1.1734E+05     1.0964E-01     4.6337E+00     CG        834
+
+ NSTEP = 50000  TIME(PS) = 100.000  TEMP(K) = 302.74  PRESS = 1.0
+
+ A V E R A G E S   O V E R     100 S T E P S
+ NSTEP = 50000  TIME(PS) = 100.000  TEMP(K) = 300.03  PRESS = 1.0
+
+ R M S  F L U C T U A T I O N S
+ NSTEP = 50000  TIME(PS) = 100.000  TEMP(K) = 1.83  PRESS = 0.1
+
+ 5.  TIMINGS
+"""
+    assert _parse_final_temperature(text) == pytest.approx(302.74)
+
 def test_worker_validates_temperature_and_writes_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = load_config(_config(tmp_path))
     ws = _workspace(tmp_path)
@@ -128,6 +151,31 @@ def test_worker_validates_temperature_and_writes_done(tmp_path: Path, monkeypatc
     assert validation["results"]["temperature_k"] == pytest.approx(299.4)
     assert validation["checks"]["temperature_in_range"] is True
     assert (ws / "06_equilibrate" / "heat" / ".done").is_file()
+
+
+def test_worker_ignores_vlimit_configuration_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_config(_config(tmp_path))
+    ws = _workspace(tmp_path)
+    prepare_heating(cfg, workspace=ws, dry_run=True)
+    script = tmp_path / "pmemd.cuda"
+    script.write_text(
+        "#!/bin/sh\n"
+        "cat > heat.out <<'EOF'\n"
+        " t       =   0.00000, dt      =   0.00200, vlimit  =  -1.00000\n"
+        " NSTEP = 50000  TIME(PS) = 100.000  TEMP(K) = 302.740\n"
+        "  FINAL RESULTS\n"
+        "5.  TIMINGS\n"
+        "EOF\n"
+        "cat > heat.rst7 <<'EOF'\n"
+        "heated\n2\n  0.100000  0.200000  0.300000  1.100000  1.200000  1.300000\n"
+        "EOF\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    validation = run_heating_worker(cfg, workspace=ws)
+    assert validation["checks"]["passed"] is True
 
 
 def test_worker_fails_on_shake_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
