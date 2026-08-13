@@ -14,6 +14,7 @@ from .mapping import map_chai_to_glycam
 from .protein import prepare_protein
 from .structure import transfer_glycan_coordinates
 from .leap import assemble_dry_complex
+from .amber import relax_hydrogens
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -93,12 +94,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax")
     if from_stage not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap")
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax")
     if through not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap")
-    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6}
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax")
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -155,7 +156,7 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6}
+        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7}
         start_num = stage_order[start_stage]
         end_num = stage_order[end_stage]
 
@@ -207,16 +208,29 @@ def prepare(
                 typer.echo(f"Protein preparation already complete: {protein_done}")
                 return
 
-        if end_stage == "leap":
+        if start_num <= stage_order["leap"] <= end_num:
             leap_done = workspace / "03_dry_relax" / ".done"
-            if leap_done.is_file():
+            if not leap_done.is_file():
+                if dry_run:
+                    result = assemble_dry_complex(cfg, workspace=workspace, dry_run=True)
+                    typer.echo(f"Prepared dry LEaP input: {result.input_path}")
+                    return
+                result = assemble_dry_complex(cfg, workspace=workspace, dry_run=False)
+                typer.echo(f"Dry LEaP assembly complete: {result.complex_pdb}")
+            elif end_stage == "leap":
                 typer.echo(f"Dry LEaP assembly already complete: {leap_done}")
                 return
-            result = assemble_dry_complex(cfg, workspace=workspace, dry_run=dry_run)
+
+        if end_stage == "hydrogen-relax":
+            relax_done = workspace / "03_dry_relax" / "hydrogen_relax" / ".done"
+            if relax_done.is_file():
+                typer.echo(f"Hydrogen relaxation already complete: {relax_done}")
+                return
+            result = relax_hydrogens(cfg, workspace=workspace, dry_run=dry_run)
             if result.dry_run:
-                typer.echo(f"Prepared dry LEaP input: {result.input_path}")
+                typer.echo(f"Prepared CPU pmemd hydrogen-relaxation input: {result.input_path}")
             else:
-                typer.echo(f"Dry LEaP assembly complete: {result.complex_pdb}")
+                typer.echo(f"Hydrogen relaxation complete: {result.output_path}")
             return
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)

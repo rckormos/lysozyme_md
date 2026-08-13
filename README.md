@@ -256,3 +256,31 @@ lyso-md prepare /path/to/workspace/config.yaml --from leap --through leap
 Phase 7 is a local Amber stage and is not submitted through LSF. Amber must be available in `PATH`, normally after `module load amber/22_rhel8`. The generated `03_dry_relax/leap.in` sources `ff19SB` and `GLYCAM_06j-1`, loads the two GLYCAM-Web frcmod files, loads the aligned GLYCAM OFF unit and prepared protein, applies the detected disulfide bonds, checks/charges the assembled complex, and writes `complex_dry.pdb`, `complex_dry.parm7`, and `complex_dry.rst7`.
 
 LEaP output is parsed fail-closed for fatal/unknown-residue/untypeable-atom/missing-parameter errors, non-integral total charge, missing outputs, inconsistent PDB/parm7/restart atom counts, and non-finite coordinates. `03_dry_relax/.done` is written only after all checks pass.
+
+## Phase 8: dry hydrogen relaxation
+
+After successful dry LEaP assembly, run the CPU-only hydrogen relaxation with:
+
+```bash
+module load amber/22_rhel8
+lyso-md prepare /path/to/workspace/config.yaml --from hydrogen-relax --through hydrogen-relax
+```
+
+This stage deliberately uses the CPU `pmemd` executable rather than `pmemd.cuda`. It starts from `complex_dry.rst7`, uses that same restart as the positional-restraint reference, restrains non-hydrogen atoms at 100 kcal/mol/A^2, and performs the configured 1000-step nonperiodic minimization. The generated input uses the fixed Phase 8 protocol:
+
+```text
+imin=1, maxcyc=1000, ncyc=500, ntb=0, igb=0, cut=1000.0,
+ntr=1, restraint_wt=100.0, restraintmask='!@H=', ntpr=50
+```
+
+Outputs are written under `03_dry_relax/hydrogen_relax/`:
+
+```text
+hrelax.in
+hrelax.out
+complex_hrelaxed.rst7
+validation.json
+.done
+```
+
+Completion is fail-closed: the output must contain a normal-completion marker and finite final energy/RMS/GMAX values, the restart must exist and contain finite coordinates, and its atom count must agree with the Phase 7 topology. A nonzero `pmemd` exit status is retained as a warning if Amber nevertheless reports normal completion and all scientific output checks pass; otherwise the stage fails and does not write `.done`.

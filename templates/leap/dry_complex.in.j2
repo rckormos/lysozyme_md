@@ -1,0 +1,18 @@
+source leaprc.protein.{{ protein_ff }}
+source leaprc.{{ glycan_ff }}
+loadamberparams {{ bacterial_frcmod }}
+loadamberparams {{ acid_frcmod }}
+loadoff {{ glycan_off }}
+protein = loadpdb {{ protein_pdb }}
+{% if disulfide_commands %}
+{{ disulfide_commands }}
+{% endif %}
+check protein
+charge protein
+check CONDENSEDSEQUENCE
+complex = combine { protein CONDENSEDSEQUENCE }
+check complex
+charge complex
+savepdb complex {{ output_pdb }}
+saveamberparm complex {{ output_parm7 }} {{ output_rst7 }}
+quit
