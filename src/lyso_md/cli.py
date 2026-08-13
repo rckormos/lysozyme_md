@@ -16,6 +16,7 @@ from .structure import transfer_glycan_coordinates
 from .leap import assemble_dry_complex
 from .amber import relax_hydrogens
 from .solvate import solvate_and_ionize
+from .minimize import prepare_minimization, run_minimization_worker
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -95,12 +96,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate", "minimize")
     if from_stage not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate")
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize")
     if through not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate")
-    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8}
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize")
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -157,7 +158,7 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8}
+        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9}
         start_num = stage_order[start_stage]
         end_num = stage_order[end_stage]
 
@@ -238,12 +239,28 @@ def prepare(
             solvate_done = workspace / "04_solvate" / ".done"
             if solvate_done.is_file():
                 typer.echo(f"Solvation/ionization already complete: {solvate_done}")
-                return
-            result = solvate_and_ionize(cfg, workspace=workspace, dry_run=dry_run)
-            if result.dry_run:
-                typer.echo(f"Prepared Phase 9 LEaP geometry probe: {result.stage / 'solvate_probe.in'}")
             else:
-                typer.echo(f"Solvation/ionization complete: {result.rst7}")
+                result = solvate_and_ionize(cfg, workspace=workspace, dry_run=dry_run)
+                if result.dry_run:
+                    typer.echo(f"Prepared Phase 9 LEaP geometry probe: {result.stage / 'solvate_probe.in'}")
+                else:
+                    typer.echo(f"Solvation/ionization complete: {result.rst7}")
+                if end_stage == "solvate":
+                    return
+            if end_stage == "solvate":
+                return
+
+        if start_num <= stage_order["minimize"] <= end_num:
+            minimize_done = workspace / "05_minimize" / ".done"
+            if not minimize_done.is_file():
+                result = prepare_minimization(cfg, workspace=workspace, dry_run=dry_run)
+                if result.dry_run:
+                    typer.echo(f"Prepared Phase 10 LSF minimization scripts: {result.stage}")
+                else:
+                    typer.echo(f"Phase 10 minimization submitted: solvent job {result.solvent_job_id}, all-system job {result.all_job_id}")
+                    typer.echo(f"Submission metadata: {result.submission_path}")
+            else:
+                typer.echo(f"Periodic minimization already complete: {minimize_done}")
             return
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
@@ -259,6 +276,17 @@ def submit(
     """Submit implemented LSF stages; Phase 3 GLYCAM inspection runs locally via prepare."""
     try:
         cfg = load_config(config, check_files=True)
+        if from_stage == "minimize" or through == "minimize":
+            if from_stage != "minimize" or through != "minimize":
+                raise ValueError("Phase 10 submit requires --from minimize --through minimize")
+            workspace = _phase2_workspace(config)
+            result = prepare_minimization(cfg, workspace=workspace, dry_run=dry_run)
+            if result.dry_run:
+                typer.echo(f"Prepared Phase 10 LSF minimization scripts: {result.stage}")
+            else:
+                typer.echo(f"Phase 10 minimization submitted: solvent job {result.solvent_job_id}, all-system job {result.all_job_id}")
+                typer.echo(f"Submission metadata: {result.submission_path}")
+            return
         _validate_submit_stage_bounds(from_stage, through)
         workspace = _phase2_workspace(config)
         if not cfg.chai.enabled:
@@ -272,6 +300,21 @@ def submit(
     else:
         typer.echo(f"Chai stage submitted: job {submission.job_id}")
         typer.echo(f"Submission metadata: {submission.submission_path}")
+
+
+@app.command("_minimize-worker", hidden=True)
+def minimize_worker(
+    worker: str = typer.Argument(...),
+    config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+) -> None:
+    """Internal LSF worker for Phase 10 GPU minimization."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        run_minimization_worker(cfg, workspace=workspace, worker=worker)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    typer.echo(f"Phase 10 {worker} minimization complete")
 
 
 @app.command("_chai-worker", hidden=True)

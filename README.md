@@ -327,3 +327,25 @@ The stage records both LEaP logs and inputs for provenance:
 ├── validation.json
 └── .done
 ```
+
+## Phase 10: periodic GPU minimization
+
+Phase 10 submits two dependent LSF GPU jobs after the integrated Phase 9 solvation/ionization checkpoint:
+
+1. 5000-step periodic minimization with 10 kcal/mol/A^2 restraints on non-water/non-ion heavy solute atoms.
+2. 5000-step whole-system minimization with 5 kcal/mol/A^2 restraints using the first minimization restart as both the starting structure and positional-restraint reference.
+
+Both stages use `pmemd.cuda`, `ntb=1`, and the configured 9 A cutoff. The restraint mask is:
+
+```text
+(!:WAT,K+,Cl-)&(!@H=)
+```
+
+The jobs are chained with LSF `done(JOBID)` dependency. Scheduler stdout/stderr are written under `logs/minimize_solvent.%J.*` and `logs/minimize_all.%J.*`. Each job validates its own restart, finite coordinates, normal completion, and absence of CUDA/NaN/SHAKE/vlimit failures. The overall `05_minimize/.done` sentinel is written only by the successful second-stage worker.
+
+Use:
+
+```bash
+lyso-md prepare /path/to/workspace/config.yaml --from minimize --through minimize --dry-run
+lyso-md prepare /path/to/workspace/config.yaml --from minimize --through minimize
+```
