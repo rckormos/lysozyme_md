@@ -421,3 +421,9 @@ lyso-md prepare /path/to/workspace/config.yaml --from npt-equilibrate --through 
 The three jobs are chained with `done(JOBID)` dependencies. Each stage has its own `validation.json` and `.done` checkpoint under `06_equilibrate/npt_equilibrate/{restraint5,restraint1,free}/`. The aggregate `06_equilibrate/npt_equilibrate/.done` sentinel is written only by the successful unrestrained stage.
 
 Validation is section-aware and requires normal Amber completion, finite temperature/density, positive density, finite restart coordinates, matching topology/restart atom counts, and absence of explicit CUDA/SHAKE/vlimit/NaN/Inf/fatal diagnostics. No density-equilibrium threshold is imposed at this stage; the purpose is to establish the final equilibrated checkpoint before production.
+
+## Phase 14 — Chunked production MD
+
+Production is restartable and split into configurable chunks (`production.chunk_ns`) rather than assuming a single long scheduler allocation. Each invocation of `lyso-md submit --from production --through production` determines the latest contiguous completed chunk, calculates remaining target time, prepares the next chunk, and submits one LSF GPU job. A later invocation resumes from that chunk's validated restart. Each chunk is retained separately; the aggregate `07_production/.done` sentinel is created only when the configured target duration has been reached.
+
+Production uses `pmemd.cuda` with restart chaining (`irest=1`, `ntx=5`), 2 fs timestep, NPT/Langevin at the configured temperature and pressure, no restraints, and `iwrap=0`. Chunk validation records cumulative simulation time, observables, output hashes, and normal-completion/failure checks.

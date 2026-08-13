@@ -20,6 +20,7 @@ from .minimize import prepare_minimization, run_minimization_worker
 from .heating import prepare_heating, run_heating_worker
 from .npt import prepare_npt_smoke, run_npt_smoke_worker
 from .equilibration import prepare_npt_equilibration, run_npt_equilibration_worker
+from .production import prepare_production, run_production_worker
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -99,12 +100,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate", "minimize", "heat", "npt-smoke", "npt-equilibrate")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate", "minimize", "heat", "npt-smoke", "npt-equilibrate", "production")
     if from_stage not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize, heat, npt-smoke")
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize, heat, npt-smoke, npt-equilibrate, production")
     if through not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize, heat, npt-smoke")
-    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11, "npt-equilibrate": 12}
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate, minimize, heat, npt-smoke, npt-equilibrate, production")
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11, "npt-equilibrate": 12, "production": 13}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -161,7 +162,7 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11, "npt-equilibrate": 12}
+        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8, "minimize": 9, "heat": 10, "npt-smoke": 11, "npt-equilibrate": 12, "production": 13}
         start_num = stage_order[start_stage]
         end_num = stage_order[end_stage]
 
@@ -306,6 +307,17 @@ def prepare(
                     typer.echo(f"Submission metadata: {result.submission_path}")
             else:
                 typer.echo(f"NPT equilibration already complete: {equil_done}")
+
+        if start_num <= stage_order["production"] <= end_num:
+            production_done = workspace / "07_production" / ".done"
+            result = prepare_production(cfg, workspace=workspace, dry_run=dry_run)
+            if result.completed:
+                typer.echo(f"Production target already complete: {production_done}")
+            elif result.dry_run:
+                typer.echo(f"Prepared Phase 14 production chunk {result.chunk_number}: {result.script_path}")
+            else:
+                typer.echo(f"Phase 14 production chunk {result.chunk_number} submitted: job {result.job_id}")
+                typer.echo(f"Submission metadata: {result.submission_path}")
             return
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
@@ -363,6 +375,19 @@ def submit(
                 typer.echo(f"Prepared Phase 13 LSF NPT equilibration scripts: {result.stage}")
             else:
                 typer.echo(f"Phase 13 NPT equilibration submitted: jobs {', '.join(j for j in result.job_ids if j)}")
+                typer.echo(f"Submission metadata: {result.submission_path}")
+            return
+        if from_stage == "production" or through == "production":
+            if from_stage != "production" or through != "production":
+                raise ValueError("Phase 14 submit requires --from production --through production")
+            workspace = _phase2_workspace(config)
+            result = prepare_production(cfg, workspace=workspace, dry_run=dry_run)
+            if result.completed:
+                typer.echo("Phase 14 production target already complete")
+            elif result.dry_run:
+                typer.echo(f"Prepared Phase 14 production chunk {result.chunk_number}: {result.script_path}")
+            else:
+                typer.echo(f"Phase 14 production chunk {result.chunk_number} submitted: job {result.job_id}")
                 typer.echo(f"Submission metadata: {result.submission_path}")
             return
         _validate_submit_stage_bounds(from_stage, through)
@@ -435,6 +460,21 @@ def npt_equilibrate_worker(
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
     typer.echo(f"Phase 13 {stage} NPT equilibration complete")
+
+
+@app.command("_production-worker", hidden=True)
+def production_worker(
+    chunk: int = typer.Argument(..., min=1),
+    config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+) -> None:
+    """Internal LSF worker for Phase 14 chunked GPU production MD."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        run_production_worker(cfg, workspace=workspace, chunk_number=chunk)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    typer.echo(f"Phase 14 production chunk {chunk} complete")
 
 
 @app.command("_chai-worker", hidden=True)

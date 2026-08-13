@@ -54,7 +54,7 @@ equilibration:
 production:
   target_ns: 1000
   chunk_ns: 250
-  walltime_hours: 72
+  walltime_hours: 80
 
 scheduler:
   type: lsf
