@@ -387,3 +387,15 @@ validation.json
 ```
 
 Validation requires normal Amber completion, a finite final temperature in the 250-350 K range, finite restart coordinates, matching topology/restart atom counts, and absence of CUDA, SHAKE, NaN/Inf, vlimit, or fatal diagnostics. `.done` is written only after all checks pass.
+
+## Phase 12 — conservative NPT smoke test
+
+After successful restrained NVT heating, submit the short NPT smoke test with:
+
+```bash
+lyso-md prepare design_042/config.yaml --from npt-smoke --through npt-smoke
+```
+
+The stage is a 5 ps conservative NPT smoke test using a 1 fs timestep, Berendsen barostat, `taup=5.0`, fresh 300 K velocities, 5 kcal/mol/A^2 heavy-solute restraints, and `iwrap=0`. The stage-start heating restart is used as both the coordinate input and restraint reference, preventing periodic-image restraint artifacts.
+
+The LSF job depends on the Phase 11 heating job when that job is still running. Validation requires normal Amber completion, finite temperature/density, a positive density, a reasonable step-0 restraint energy (below the pipeline smoke-test threshold), a valid restart, matching topology atom counts, and absence of explicit CUDA/SHAKE/vlimit/NaN/Inf failures. The `.done` sentinel is written only after validation succeeds.
