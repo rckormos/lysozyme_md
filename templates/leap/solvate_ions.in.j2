@@ -1,0 +1,21 @@
+source leaprc.protein.{{ protein_ff }}
+source leaprc.GLYCAM_06j-1
+source leaprc.water.{{ water_ff | lower }}
+loadamberparams {{ bacterial_frcmod }}
+loadamberparams {{ acid_frcmod }}
+loadoff {{ glycan_off }}
+protein = loadpdb {{ protein_pdb }}
+{% if disulfide_commands %}
+{{ disulfide_commands }}
+{% endif %}
+complex = combine { protein CONDENSEDSEQUENCE }
+check complex
+charge complex
+solvateOct complex OPCBOX {{ buffer_angstrom }}
+addIonsRand complex K+ {{ potassium }}
+addIonsRand complex Cl- {{ chloride }}
+check complex
+charge complex
+saveAmberParm complex {{ output_parm7 }} {{ output_rst7 }}
+savePdb complex {{ output_pdb }}
+quit

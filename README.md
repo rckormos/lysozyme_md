@@ -284,3 +284,46 @@ validation.json
 ```
 
 Completion is fail-closed: the output must contain a normal-completion marker and finite final energy/RMS/GMAX values, the restart must exist and contain finite coordinates, and its atom count must agree with the Phase 7 topology. A nonzero `pmemd` exit status is retained as a warning if Amber nevertheless reports normal completion and all scientific output checks pass; otherwise the stage fails and does not write `.done`.
+
+## Phase 9: OPC solvation and KCl ionization
+
+After Phase 8 hydrogen relaxation, run the solvation/ionization stage with:
+
+```bash
+module load amber/22_rhel8
+lyso-md prepare /path/to/workspace/config.yaml --from solvate --through solvate
+```
+
+Phase 9 deliberately does **not** reload an Amber topology/restart into LEaP. Amber 22 LEaP does not provide the assumed `loadAmberParm` operation needed for that architecture, and reloading the dry complex PDB also loses the authoritative GLYCAM-Web residue templates. Instead, the final ionized construction is a fresh LEaP session that reconstructs the typed protein + `CONDENSEDSEQUENCE` complex, applies the detected disulfides, runs `solvateOct`, adds the calculated KCl with `addIonsRand`, and writes the final topology/restart/PDB with the canonical Amber command spellings `saveAmberParm` and `savePdb`.
+
+Because the exact `solvateOct` box is produced by LEaP itself, Phase 9 first performs a **read-only LEaP geometry probe** using the same authoritative typed sources. The probe's periodic box supplies the exact volume for the configured 50 mM KCl calculation. The final ionized LEaP session then repeats the typed construction from source files; it never loads the probe topology. This two-invocation design is intentional: it preserves exact Amber box geometry without guessing or reimplementing `solvateOct`.
+
+The final construction uses commands of the form:
+
+```text
+solvateOct complex OPCBOX 12.0
+addIonsRand complex K+ <N_K>
+addIonsRand complex Cl- <N_Cl>
+saveAmberParm complex complex_solvated.parm7 complex_solvated.rst7
+savePdb complex complex_solvated.pdb
+```
+
+After LEaP finishes, Python replaces only the first dry-solute atoms in the solvated restart/PDB with the coordinates from `complex_hrelaxed.rst7`, preserving water, ions, and periodic box vectors. Final validation checks atom counts, box preservation, K+/Cl- counts, neutral charge, finite coordinates, and coordinate transfer before writing `04_solvate/.done`.
+
+The stage records both LEaP logs and inputs for provenance:
+
+```text
+04_solvate/
+├── solvate_probe.in
+├── solvate_probe.log
+├── solvated_probe.parm7
+├── solvated_probe.rst7
+├── solvated_probe.pdb
+├── solvate_ionize.in
+├── solvate.log
+├── complex_solvated.parm7
+├── complex_solvated.rst7
+├── complex_solvated.pdb
+├── validation.json
+└── .done
+```

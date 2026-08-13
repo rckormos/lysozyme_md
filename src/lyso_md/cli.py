@@ -15,6 +15,7 @@ from .protein import prepare_protein
 from .structure import transfer_glycan_coordinates
 from .leap import assemble_dry_complex
 from .amber import relax_hydrogens
+from .solvate import solvate_and_ionize
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -94,12 +95,12 @@ def _stub(name: str, config: Path, from_stage: Optional[str], through: Optional[
 
 
 def _validate_prepare_stage_bounds(from_stage: Optional[str], through: Optional[str]) -> None:
-    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax")
+    allowed = (None, "chai", "glycam", "mapping", "coordinates", "protein", "leap", "hydrogen-relax", "solvate")
     if from_stage not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax")
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate")
     if through not in allowed:
-        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax")
-    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7}
+        raise ValueError("implemented prepare stages are: chai, glycam, mapping, coordinates, protein, leap, hydrogen-relax, solvate")
+    order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8}
     if from_stage is not None and through is not None and order[from_stage] > order[through]:
         raise ValueError("--from stage must not come after --through stage")
 
@@ -156,7 +157,7 @@ def prepare(
                 typer.echo(f"Chai stage already complete: {chai_done}")
                 return
 
-        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7}
+        stage_order = {"chai": 1, "glycam": 2, "mapping": 3, "coordinates": 4, "protein": 5, "leap": 6, "hydrogen-relax": 7, "solvate": 8}
         start_num = stage_order[start_stage]
         end_num = stage_order[end_stage]
 
@@ -221,16 +222,28 @@ def prepare(
                 typer.echo(f"Dry LEaP assembly already complete: {leap_done}")
                 return
 
-        if end_stage == "hydrogen-relax":
+        if start_num <= stage_order["hydrogen-relax"] <= end_num:
             relax_done = workspace / "03_dry_relax" / "hydrogen_relax" / ".done"
-            if relax_done.is_file():
+            if not relax_done.is_file():
+                result = relax_hydrogens(cfg, workspace=workspace, dry_run=dry_run)
+                if result.dry_run:
+                    typer.echo(f"Prepared CPU pmemd hydrogen-relaxation input: {result.input_path}")
+                    return
+                typer.echo(f"Hydrogen relaxation complete: {result.output_path}")
+            elif end_stage == "hydrogen-relax":
                 typer.echo(f"Hydrogen relaxation already complete: {relax_done}")
                 return
-            result = relax_hydrogens(cfg, workspace=workspace, dry_run=dry_run)
+
+        if end_stage == "solvate":
+            solvate_done = workspace / "04_solvate" / ".done"
+            if solvate_done.is_file():
+                typer.echo(f"Solvation/ionization already complete: {solvate_done}")
+                return
+            result = solvate_and_ionize(cfg, workspace=workspace, dry_run=dry_run)
             if result.dry_run:
-                typer.echo(f"Prepared CPU pmemd hydrogen-relaxation input: {result.input_path}")
+                typer.echo(f"Prepared Phase 9 LEaP geometry probe: {result.stage / 'solvate_probe.in'}")
             else:
-                typer.echo(f"Hydrogen relaxation complete: {result.output_path}")
+                typer.echo(f"Solvation/ionization complete: {result.rst7}")
             return
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
