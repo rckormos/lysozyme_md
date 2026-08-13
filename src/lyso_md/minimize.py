@@ -21,7 +21,7 @@ _FATAL_PATTERNS = (
     re.compile(r"\bCUDA\s+error", re.IGNORECASE),
     re.compile(r"\bNaN\b", re.IGNORECASE),
     re.compile(r"\bNAN\b", re.IGNORECASE),
-    re.compile(r"SHAKE", re.IGNORECASE),
+    re.compile(r"\bSHAKE\s+(?:FAILURE|FAILED|FAIL|CANNOT|NOT\s+CONVERG|DID\s+NOT\s+CONVERG)", re.IGNORECASE),
     re.compile(r"\bvlimit\b", re.IGNORECASE),
     re.compile(r"\bFATAL\b", re.IGNORECASE),
 )

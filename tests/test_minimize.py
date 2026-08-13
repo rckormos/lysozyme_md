@@ -105,6 +105,32 @@ def test_worker_validates_success_and_finalizes_phase10(tmp_path: Path, monkeypa
     assert validation["checks"]["passed"] is True
 
 
+def test_worker_accepts_normal_shake_timing_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_config(_config(tmp_path))
+    ws = _workspace(tmp_path)
+    prepare_minimization(cfg, workspace=ws, dry_run=True)
+    script = tmp_path / "pmemd.cuda"
+    script.write_text(
+        "#!/bin/sh\n"
+        "cat > min.out <<'EOF'\n"
+        "                    FINAL RESULTS\n"
+        "   NSTEP       ENERGY          RMS            GMAX         NAME    NUMBER\n"
+        "   5000      -1.1734E+05     1.0964E-01     4.6337E+00     CG        834\n"
+        "   5.  TIMINGS\n"
+        "|     Shake             0.00    0.00\n"
+        "EOF\n"
+        "cat > min.rst7 <<'EOF'\n"
+        "minimized\n2\n  0.100000  0.200000  0.300000  1.100000  1.200000  1.300000\n"
+        "EOF\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", str(tmp_path) + os.pathsep + os.environ.get("PATH", ""))
+    validation = run_minimization_worker(cfg, workspace=ws, worker="solvent")
+    assert validation["checks"]["passed"] is True
+
+
 def test_worker_fails_on_cuda_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     cfg = load_config(_config(tmp_path))
     ws = _workspace(tmp_path)
