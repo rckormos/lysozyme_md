@@ -118,3 +118,32 @@ def test_missing_phase7_checkpoint_fails(tmp_path: Path) -> None:
     (ws / "03_dry_relax/.done").unlink()
     with pytest.raises(ValueError, match="Phase 7"):
         relax_hydrogens(cfg, workspace=ws, dry_run=True)
+
+
+def test_netcdf_restart_parser_reads_amber22_format(tmp_path: Path) -> None:
+    from scipy.io import netcdf_file
+    from lyso_md.amber import _parse_restart_atom_count, _parse_restart_coordinates
+
+    path = tmp_path / "complex_hrelaxed.rst7"
+    with netcdf_file(str(path), mode="w") as nc:
+        nc.createDimension("spatial", 3)
+        nc.createDimension("atom", 2)
+        nc.createVariable("coordinates", "d", ("atom", "spatial"))[:] = [
+            [0.1, 0.2, 0.3],
+            [1.1, 1.2, 1.3],
+        ]
+    assert _parse_restart_atom_count(path) == 2
+    assert _parse_restart_coordinates(path, 2) == [0.1, 0.2, 0.3, 1.1, 1.2, 1.3]
+
+
+def test_netcdf_restart_parser_rejects_nonfinite_coordinates(tmp_path: Path) -> None:
+    from scipy.io import netcdf_file
+    from lyso_md.amber import _parse_restart_coordinates
+
+    path = tmp_path / "complex_hrelaxed.rst7"
+    with netcdf_file(str(path), mode="w") as nc:
+        nc.createDimension("spatial", 3)
+        nc.createDimension("atom", 1)
+        nc.createVariable("coordinates", "d", ("atom", "spatial"))[:] = [[float("nan"), 0.0, 0.0]]
+    with pytest.raises(ValueError, match="non-finite"):
+        _parse_restart_coordinates(path, 1)

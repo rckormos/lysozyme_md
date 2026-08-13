@@ -11,6 +11,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from scipy.io import netcdf_file
+
 from . import __version__
 from .config import PipelineConfig
 
@@ -64,20 +67,43 @@ def _render_input(cfg: PipelineConfig) -> str:
     return f"""Hydrogen relaxation for lyso-md\n&cntrl\n  imin=1,\n  maxcyc={cfg.equilibration.hydrogen_relax_steps},\n  ncyc={cfg.equilibration.hydrogen_relax_steps // 2},\n  ntb=0,\n  igb=0,\n  cut=1000.0,\n  ntr=1,\n  restraint_wt=100.0,\n  restraintmask='!@H=',\n  ntpr=50,\n/\n"""
 
 
-def _parse_restart_atom_count(path: Path) -> int:
+def _read_restart(path: Path) -> tuple[int, list[float]]:
+    """Read either an ASCII Amber restart or Amber NetCDF restart.
+
+    Amber 22 defaults to ``ntxo=2``, which writes the restart as NetCDF.
+    The Phase 8 output therefore cannot be parsed by assuming the second
+    text line contains NATOM.
+    """
+    with path.open("rb") as handle:
+        magic = handle.read(3)
+
+    if magic == b"CDF":
+        try:
+            with netcdf_file(str(path), mode="r", mmap=False) as nc:
+                if "atom" not in nc.dimensions or "coordinates" not in nc.variables:
+                    raise ValueError("Amber NetCDF restart lacks atom/coordinates variables")
+                natom = int(nc.dimensions["atom"])
+                coords = np.asarray(nc.variables["coordinates"].data, dtype=float)
+        except Exception as exc:
+            raise ValueError(f"cannot parse Amber NetCDF restart: {path}") from exc
+        if coords.shape != (natom, 3):
+            raise ValueError(
+                f"Amber NetCDF restart coordinates have shape {coords.shape}; expected ({natom}, 3)"
+            )
+        flat = coords.reshape(-1).tolist()
+        if not np.isfinite(coords).all():
+            raise ValueError("hydrogen-relaxation restart contains non-finite coordinates")
+        return natom, flat
+
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     if len(lines) < 2:
         raise ValueError(f"Amber restart is too short: {path}")
     try:
-        return int(lines[1].split()[0])
+        natom = int(lines[1].split()[0])
     except (ValueError, IndexError) as exc:
         raise ValueError(f"cannot parse atom count from Amber restart: {path}") from exc
-
-
-def _parse_restart_coordinates(path: Path, natom: int) -> list[float]:
-    lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[2:]
     values: list[float] = []
-    for line in lines:
+    for line in lines[2:]:
         for token in line.split():
             try:
                 values.append(float(token.replace("D", "E").replace("d", "e")))
@@ -89,6 +115,17 @@ def _parse_restart_coordinates(path: Path, natom: int) -> list[float]:
     coords = values[:needed]
     if not all(math.isfinite(value) for value in coords):
         raise ValueError("hydrogen-relaxation restart contains non-finite coordinates")
+    return natom, coords
+
+
+def _parse_restart_atom_count(path: Path) -> int:
+    return _read_restart(path)[0]
+
+
+def _parse_restart_coordinates(path: Path, natom: int) -> list[float]:
+    parsed_natom, coords = _read_restart(path)
+    if parsed_natom != natom:
+        raise ValueError(f"Amber restart atom count changed while reading {path}: {parsed_natom} != {natom}")
     return coords
 
 
