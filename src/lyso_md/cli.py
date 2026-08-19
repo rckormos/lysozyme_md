@@ -22,6 +22,7 @@ from .npt import prepare_npt_smoke, run_npt_smoke_worker
 from .equilibration import prepare_npt_equilibration, run_npt_equilibration_worker
 from .production import prepare_production, run_production_worker
 from .orchestration import format_status
+from .analysis import analyze as run_analysis
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -508,6 +509,16 @@ def status(
 @app.command()
 def analyze(
     config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Generate CPPTRAJ/analysis inputs without executing external tools."),
 ) -> None:
-    """Run standard analysis (stub in Phases 0-1)."""
-    _stub("analyze", config, None, None, False)
+    """Run the standard CPPTRAJ analysis suite on completed production."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        result = run_analysis(cfg, workspace=workspace, dry_run=dry_run)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    if result.dry_run:
+        typer.echo(f"Prepared Phase 16 analysis inputs: {result.stage}")
+    else:
+        typer.echo(f"Phase 16 analysis complete: {result.stage}")

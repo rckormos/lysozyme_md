@@ -433,4 +433,15 @@ Production uses `pmemd.cuda` with restart chaining (`irest=1`, `ntx=5`), 2 fs ti
 
 The pipeline provides an explicit LSF status view with `lyso-md status CONFIG`. It reports each implemented stage, its `.done` checkpoint, and any recorded LSF job IDs. Scheduler-specific stage modules retain their dependency expressions and required-file checks; the top-level `submit` command dispatches the appropriate LSF stage submission.
 
-Phase 15 is scheduler orchestration. The standard CPPTRAJ analysis suite is Phase 16.
+Phase 15 is scheduler orchestration.
+
+## Phase 16 — Standard CPPTRAJ analysis
+
+After the configured production target is complete, run:
+
+```bash
+lyso-md analyze CONFIG --dry-run
+lyso-md analyze CONFIG
+```
+
+Phase 16 preprocesses completed production chunks with CPPTRAJ, imaging and fitting on the protein backbone, stripping water/ions, and writing a NetCDF trajectory without box information. ParmEd creates the matching stripped topology. It then generates/runs the standard RMSD, RMSF, Rg, DSSP, bidirectional protein-glycan H-bond, contact, C-alpha PCA, PCA projection/mode, DCCM, hierarchical clustering, average-structure, subsampled pairwise RMSD, distance, and angle analyses. PCA uses the prescribed `@CA` masks and 20 eigenvectors; PCA mode pseudo-trajectories use `trajoutmask @CA`. The analysis checkpoint is `07_analysis/.done`.

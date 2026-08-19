@@ -20,6 +20,7 @@ STAGES: tuple[tuple[str, Path], ...] = (
     ("npt-smoke", Path("06_equilibrate/npt_smoke/.done")),
     ("npt-equilibrate", Path("06_equilibrate/.done")),
     ("production", Path("07_production/.done")),
+    ("analysis", Path("07_analysis/.done")),
 )
 
 
