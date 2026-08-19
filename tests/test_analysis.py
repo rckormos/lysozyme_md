@@ -83,3 +83,37 @@ def test_analysis_requires_contiguous_validated_chunks(tmp_path: Path) -> None:
     (ws / "07_production" / "chunk_002" / ".done").write_text("{}\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"production chunk 2 has \.done but no validation.json"):
         analyze(cfg, workspace=ws, dry_run=True)
+
+
+def test_analysis_reuses_completed_preprocess_checkpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_config(_config(tmp_path))
+    ws = _production_workspace(tmp_path)
+    stage = ws / "07_analysis"
+    stage.mkdir(parents=True)
+    processed = stage / "processed.nc"
+    processed.write_bytes(b"processed-netcdf")
+    topology = stage / "processed.parm7"
+    topology.write_bytes(b"processed-topology")
+    from lyso_md import analysis as analysis_mod
+    analysis_mod._checkpoint_write(stage, "preprocess", [processed, topology])
+    calls: list[str] = []
+    monkeypatch.setattr(analysis_mod, "_run_cpptraj", lambda *args, **kwargs: calls.append(Path(args[0]).name))
+    monkeypatch.setattr(analysis_mod, "_write_parmed_stripped", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ParmEd should not rerun")))
+    # The test only exercises checkpoint recognition directly; downstream products are intentionally absent.
+    assert analysis_mod._checkpoint_valid(stage, "preprocess", [processed, topology])
+    assert calls == []
+
+
+def test_analysis_checkpoint_detects_tampered_output(tmp_path: Path) -> None:
+    cfg = load_config(_config(tmp_path))
+    ws = _production_workspace(tmp_path)
+    stage = ws / "07_analysis"
+    stage.mkdir(parents=True)
+    processed = stage / "processed.nc"
+    processed.write_bytes(b"processed-netcdf")
+    topology = stage / "processed.parm7"
+    topology.write_bytes(b"processed-topology")
+    from lyso_md import analysis as analysis_mod
+    analysis_mod._checkpoint_write(stage, "preprocess", [processed, topology])
+    processed.write_bytes(b"tampered")
+    assert not analysis_mod._checkpoint_valid(stage, "preprocess", [processed, topology])

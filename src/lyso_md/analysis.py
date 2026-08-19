@@ -142,15 +142,82 @@ def _write_parmed_stripped(topology: Path, output: Path) -> None:
     structure.save(str(output), overwrite=True)
 
 
-def _run_cpptraj(input_path: Path, *, cwd: Path) -> None:
+def _checkpoint_path(stage: Path, name: str) -> Path:
+    return stage / f"{name}.done"
+
+
+def _checkpoint_write(stage: Path, name: str, outputs: list[Path]) -> None:
+    payload = {
+        "stage": f"analysis_{name}",
+        "status": "done",
+        "pipeline_version": __version__,
+        "completed_at": _utc_now(),
+        "outputs": [str(path) for path in outputs],
+        "sha256": {path.name: _sha256(path) for path in outputs},
+    }
+    _checkpoint_path(stage, name).write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+
+def _checkpoint_valid(stage: Path, name: str, outputs: list[Path]) -> bool:
+    checkpoint = _checkpoint_path(stage, name)
+    if not checkpoint.is_file():
+        return False
+    try:
+        payload = json.loads(checkpoint.read_text(encoding="utf-8"))
+        if payload.get("status") != "done":
+            return False
+        for path in outputs:
+            if not path.is_file() or path.stat().st_size == 0:
+                return False
+            recorded = payload.get("sha256", {}).get(path.name)
+            if recorded and recorded != _sha256(path):
+                return False
+        return True
+    except (OSError, ValueError, json.JSONDecodeError):
+        return False
+
+
+def _outputs_exist(outputs: list[Path]) -> bool:
+    return bool(outputs) and all(path.is_file() and path.stat().st_size > 0 for path in outputs)
+
+
+def _run_cpptraj(input_path: Path, *, cwd: Path, outputs: list[Path] | None = None) -> None:
     executable = shutil.which("cpptraj")
     if executable is None:
         raise RuntimeError("cpptraj was not found on PATH; load Amber 22 before running Phase 16")
+    output_paths = outputs or []
+    tmp_paths: list[tuple[Path, Path]] = []
+    rendered = input_path.read_text(encoding="utf-8")
+    if output_paths:
+        replacements = {}
+        for output in output_paths:
+            tmp = output.with_name(output.name + ".tmp")
+            if tmp.exists() or tmp.is_symlink():
+                tmp.unlink()
+            replacements[str(output)] = str(tmp)
+            tmp_paths.append((output, tmp))
+        for final, tmp in replacements.items():
+            rendered = rendered.replace(final, tmp)
+        input_path = input_path.with_name(input_path.stem + ".tmp.in")
+        input_path.write_text(rendered, encoding="utf-8")
     proc = subprocess.run([executable, "-i", str(input_path)], cwd=cwd, text=True, capture_output=True)
-    log = cwd / f"{input_path.stem}.cpptraj.log"
+    log = cwd / f"{input_path.stem.replace('.tmp', '')}.cpptraj.log"
     log.write_text((proc.stdout or "") + ("\n--- STDERR ---\n" + proc.stderr if proc.stderr else ""), encoding="utf-8")
     if proc.returncode != 0:
+        for _, tmp in tmp_paths:
+            if tmp.exists() or tmp.is_symlink():
+                tmp.unlink()
+        if input_path.name.endswith(".tmp.in"):
+            input_path.unlink(missing_ok=True)
         raise RuntimeError(f"cpptraj failed for {input_path.name} with exit code {proc.returncode}; see {log}")
+    for final, tmp in tmp_paths:
+        if not tmp.is_file() or tmp.stat().st_size == 0:
+            raise RuntimeError(f"CPPTRAJ did not create usable output: {final}")
+        tmp.replace(final)
+    if input_path.name.endswith(".tmp.in"):
+        input_path.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -208,42 +275,54 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
     if dry_run:
         return AnalysisResult(stage, True, processed_trajectory, processed_topology)
 
-    _run_cpptraj(preprocess, cwd=stage)
-    if not processed_trajectory.is_file() or processed_trajectory.stat().st_size == 0:
-        raise RuntimeError("CPPTRAJ preprocessing did not create processed.nc")
-    _write_parmed_stripped(topology, processed_topology)
-    if not processed_topology.is_file() or processed_topology.stat().st_size == 0:
-        raise RuntimeError("ParmEd did not create processed.parm7")
-    _run_cpptraj(pairwise_input, cwd=stage)
-    for name in inputs:
-        _run_cpptraj(stage / name, cwd=stage)
+    preprocess_outputs = [processed_trajectory]
+    topology_outputs = [processed_topology]
+    if not _checkpoint_valid(stage, "preprocess", preprocess_outputs):
+        if not _outputs_exist(preprocess_outputs):
+            _run_cpptraj(preprocess, cwd=stage, outputs=preprocess_outputs)
+        _write_parmed_stripped(topology, processed_topology)
+        if not _outputs_exist(topology_outputs):
+            raise RuntimeError("ParmEd did not create processed.parm7")
+        _checkpoint_write(stage, "preprocess", [processed_trajectory, processed_topology])
+    elif not _outputs_exist(topology_outputs):
+        _write_parmed_stripped(topology, processed_topology)
+        _checkpoint_write(stage, "preprocess", [processed_trajectory, processed_topology])
 
-    required = [
-        processed_trajectory,
-        processed_topology,
-        stage / "rmsd_protein_ca.dat",
-        stage / "rmsd_glycan.dat",
-        stage / "rmsf_ca.dat",
-        stage / "rg_protein.dat",
-        stage / "rg_glycan.dat",
-        stage / "dssp.dat",
-        stage / "hbond_protein_to_glycan.dat",
-        stage / "hbond_glycan_to_protein.dat",
-        stage / "protein_glycan_contacts.dat",
-        stage / "ca_modes.dat",
-        stage / "ca_projection.dat",
-        stage / "mode1.nc",
-        stage / "mode2.nc",
-        stage / "mode3.nc",
-        stage / "dccm.dat",
-        stage / "cluster.dat",
-        stage / "cluster_summary.dat",
-        stage / "average_structure.pdb",
-        stage / "pairwise_subsampled.nc",
-        stage / "pairwise_rmsd.dat",
-        stage / "distances.dat",
-        stage / "angles.dat",
-    ]
+    pairwise_trajectory = stage / "pairwise_subsampled.nc"
+    if not _checkpoint_valid(stage, "pairwise_preprocess", [pairwise_trajectory]):
+        if not _outputs_exist([pairwise_trajectory]):
+            _run_cpptraj(pairwise_input, cwd=stage, outputs=[pairwise_trajectory])
+        _checkpoint_write(stage, "pairwise_preprocess", [pairwise_trajectory])
+
+    analysis_outputs = {
+        "rmsd": [stage / "rmsd_protein_ca.dat", stage / "rmsd_glycan.dat"],
+        "rmsf": [stage / "rmsf_ca.dat"],
+        "rg": [stage / "rg_protein.dat", stage / "rg_glycan.dat"],
+        "dssp": [stage / "dssp.dat"],
+        "hbond_protein_to_glycan": [stage / "hbond_protein_to_glycan.dat"],
+        "hbond_glycan_to_protein": [stage / "hbond_glycan_to_protein.dat"],
+        "contacts": [stage / "protein_glycan_contacts.dat"],
+        "pca": [stage / "ca_modes.dat", stage / "ca_projection.dat"],
+        "pca_modes": [stage / "mode1.nc", stage / "mode2.nc", stage / "mode3.nc"],
+        "dccm": [stage / "dccm.dat"],
+        "clustering": [stage / "cluster.dat", stage / "cluster_summary.dat"],
+        "average_structure": [stage / "average_structure.pdb"],
+        "pairwise_rmsd": [stage / "pairwise_rmsd.dat"],
+        "distances": [stage / "distances.dat"],
+        "angles": [stage / "angles.dat"],
+    }
+    for name, outputs in analysis_outputs.items():
+        if _checkpoint_valid(stage, name, outputs):
+            continue
+        if _outputs_exist(outputs):
+            _checkpoint_write(stage, name, outputs)
+            continue
+        _run_cpptraj(stage / next(k for k in inputs if k.startswith(name + ".")), cwd=stage, outputs=outputs)
+        _checkpoint_write(stage, name, outputs)
+
+    required = [processed_trajectory, processed_topology, pairwise_trajectory]
+    for outputs in analysis_outputs.values():
+        required.extend(outputs)
     missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
     if missing:
         raise RuntimeError("Phase 16 analysis did not produce required output(s): " + ", ".join(missing))
