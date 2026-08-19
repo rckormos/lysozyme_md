@@ -98,7 +98,7 @@ def _analysis_inputs(processed_topology: Path, processed_trajectory: Path, root:
         "hbond_glycan_to_protein.in": header
         + f"hbond HB_G2P out hbond_glycan_to_protein.dat donormask {GLYCAN_MASK} acceptormask {PROTEIN_MASK}\nrun\nquit\n",
         "contacts.in": header
-        + f"contacts {PROTEIN_MASK} {GLYCAN_MASK} distance 4.0 out protein_glycan_contacts.dat\nrun\nquit\n",
+        + f"nativecontacts {PROTEIN_MASK} {GLYCAN_MASK} distance 4.0 skipnative out protein_glycan_contacts.dat\nrun\nquit\n",
         "pca.in": header
         + "rms first @CA\n"
         + "matrix covar name covar @CA\n"

@@ -62,6 +62,9 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     assert "matrix covar name covar @CA" in pca
     assert "diagmatrix covar out ca_modes.dat vecs 20 name ca_modes" in pca
     assert "projection modes ca_modes.dat beg 1 end 3 @CA out ca_projection.dat" in pca
+    contacts = (stage / "contacts.in").read_text()
+    assert "nativecontacts :1-130 :131-135 distance 4.0 skipnative out protein_glycan_contacts.dat" in contacts
+    assert "\ncontacts :1-130 :131-135" not in "\n" + contacts
     modes = (stage / "pca_modes.in").read_text()
     assert "trajoutmask @CA" in modes
     assert not (stage / ".done").exists()
