@@ -331,7 +331,7 @@ def prepare_production(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = 
     (workspace / "logs").mkdir(parents=True, exist_ok=True)
     submission_path = root / "submission.json"
     completed_ns, last_chunk = _read_completed_chunks(workspace)
-    if completed_ns >= cfg.production.target_ns - PRODUCTION_TIME_TOLERANCE:
+    if completed_ns >= cfg.production.target_ns - PRODUCTION_TIME_TOLERANCE_NS:
         if not (root / ".done").is_file():
             payload = {"stage": "production", "status": "done", "pipeline_version": __version__, "completed_at": _utc_now(), "completed_ns": completed_ns}
             (root / ".done").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
