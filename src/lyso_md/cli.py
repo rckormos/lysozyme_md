@@ -21,6 +21,7 @@ from .heating import prepare_heating, run_heating_worker
 from .npt import prepare_npt_smoke, run_npt_smoke_worker
 from .equilibration import prepare_npt_equilibration, run_npt_equilibration_worker
 from .production import prepare_production, run_production_worker
+from .orchestration import format_status
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -495,8 +496,13 @@ def chai_worker(
 def status(
     config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
 ) -> None:
-    """Summarize pipeline state (stub in Phases 0-1)."""
-    _stub("status", config, None, None, False)
+    """Summarize pipeline checkpoints and recorded LSF job IDs."""
+    try:
+        load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+    except (ValueError, ValidationError, OSError) as exc:
+        _fail(exc)
+    typer.echo(format_status(workspace))
 
 
 @app.command()

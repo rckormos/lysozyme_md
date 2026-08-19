@@ -117,7 +117,7 @@ lyso-md prepare CONFIG [--from chai] [--through chai] [--dry-run] [--local]
 lyso-md submit CONFIG [--from chai] [--through chai] [--dry-run]
 ```
 
-`prepare` and `submit` are convenience wrappers with `--from` / `--through`. In Phase 2, both submit Chai through LSF by default. `prepare --local` is the explicit direct-execution escape hatch for development. `status` and `analyze` remain stubs.
+`prepare` and `submit` are convenience wrappers with `--from` / `--through`. In Phase 2, both submit Chai through LSF by default. `prepare --local` is the explicit direct-execution escape hatch for development. `status` reports stage checkpoints and recorded LSF job IDs; analysis remains deferred to Phase 16.
 
 ## LSF execution
 
@@ -427,3 +427,10 @@ Validation is section-aware and requires normal Amber completion, finite tempera
 Production is restartable and split into configurable chunks (`production.chunk_ns`) rather than assuming a single long scheduler allocation. Each invocation of `lyso-md submit --from production --through production` determines the latest contiguous completed chunk, calculates remaining target time, prepares the next chunk, and submits one LSF GPU job. A later invocation resumes from that chunk's validated restart. Each chunk is retained separately; the aggregate `07_production/.done` sentinel is created only when the configured target duration has been reached.
 
 Production uses `pmemd.cuda` with restart chaining (`irest=1`, `ntx=5`), 2 fs timestep, NPT/Langevin at the configured temperature and pressure, no restraints, and `iwrap=0`. Chunk validation records cumulative simulation time, observables, output hashes, and normal-completion/failure checks.
+
+
+## Phase 15 — LSF orchestration
+
+The pipeline provides an explicit LSF status view with `lyso-md status CONFIG`. It reports each implemented stage, its `.done` checkpoint, and any recorded LSF job IDs. Scheduler-specific stage modules retain their dependency expressions and required-file checks; the top-level `submit` command dispatches the appropriate LSF stage submission.
+
+Phase 15 is scheduler orchestration. The standard CPPTRAJ analysis suite is Phase 16.
