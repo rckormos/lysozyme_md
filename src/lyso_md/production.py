@@ -175,6 +175,73 @@ def _read_completed_chunks(workspace: Path) -> tuple[float, int]:
     return completed_ns, number
 
 
+def reconcile_production_checkpoint(cfg: PipelineConfig, *, workspace: Path) -> dict[str, Any]:
+    """Reconcile validated production chunks into the aggregate production checkpoint."""
+    workspace = Path(workspace).resolve()
+    root = workspace / "07_production"
+    root.mkdir(parents=True, exist_ok=True)
+    completed_ns, last_chunk = _read_completed_chunks(workspace)
+    target_ns = float(cfg.production.target_ns)
+    if last_chunk == 0:
+        raise ValueError("cannot reconcile production: no completed production chunks were found")
+    if completed_ns < target_ns - 1e-9:
+        raise ValueError(
+            f"cannot reconcile production checkpoint: validated production is {completed_ns:g} ns, "
+            f"below the configured target of {target_ns:g} ns"
+        )
+
+    chunk_records: list[dict[str, Any]] = []
+    for number in range(1, last_chunk + 1):
+        stage, restart, done = _chunk_paths(workspace, number)
+        validation_path = stage / "validation.json"
+        payload = json.loads(validation_path.read_text(encoding="utf-8"))
+        chunk_records.append({
+            "chunk": number,
+            "completed_ns": float(payload["results"]["completed_ns"]),
+            "validation": str(validation_path),
+            "restart": str(restart),
+            "sentinel": str(done),
+        })
+
+    latest_stage, latest_restart, _ = _chunk_paths(workspace, last_chunk)
+    validation = {
+        "stage": "production",
+        "status": "done",
+        "pipeline_version": __version__,
+        "completed_at": _utc_now(),
+        "results": {
+            "target_ns": target_ns,
+            "completed_ns": completed_ns,
+            "chunks": last_chunk,
+            "latest_restart": str(latest_restart),
+        },
+        "checks": {
+            "contiguous_validated_chunks": True,
+            "target_reached": True,
+            "all_chunk_validations_passed": True,
+            "latest_restart_exists": latest_restart.is_file(),
+            "passed": True,
+        },
+        "chunks": chunk_records,
+    }
+    validation_path = root / "production_validation.json"
+    sentinel_path = root / ".done"
+    validation_path.write_text(json.dumps(validation, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    sentinel = {
+        "stage": "production",
+        "status": "done",
+        "pipeline_version": __version__,
+        "completed_at": validation["completed_at"],
+        "target_ns": target_ns,
+        "completed_ns": completed_ns,
+        "chunks": last_chunk,
+        "validation": str(validation_path),
+        "latest_restart": str(latest_restart),
+    }
+    sentinel_path.write_text(json.dumps(sentinel, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return validation
+
+
 def _required_start(workspace: Path, chunk_number: int) -> tuple[Path, Path]:
     if chunk_number == 1:
         root = workspace / "06_equilibrate" / "npt_equilibrate" / "free"

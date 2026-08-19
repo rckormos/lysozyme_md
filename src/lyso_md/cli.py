@@ -20,7 +20,7 @@ from .minimize import prepare_minimization, run_minimization_worker
 from .heating import prepare_heating, run_heating_worker
 from .npt import prepare_npt_smoke, run_npt_smoke_worker
 from .equilibration import prepare_npt_equilibration, run_npt_equilibration_worker
-from .production import prepare_production, run_production_worker
+from .production import prepare_production, run_production_worker, reconcile_production_checkpoint
 from .orchestration import format_status
 from .analysis import analyze as run_analysis
 from .logging_utils import configure_logging
@@ -491,6 +491,23 @@ def chai_worker(
     except (ValueError, ValidationError, OSError, RuntimeError) as exc:
         _fail(exc)
     typer.echo(f"Chai stage complete: {result.selected_pdb}")
+
+
+@app.command("reconcile-production")
+def reconcile_production(
+    config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+) -> None:
+    """Reconcile validated production chunks into the aggregate production checkpoint."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        result = reconcile_production_checkpoint(cfg, workspace=workspace)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    typer.echo(
+        f"Production checkpoint reconciled: {workspace / '07_production/.done'} "
+        f"({result['results']['completed_ns']:g} ns across {result['results']['chunks']} chunks)"
+    )
 
 
 @app.command()
