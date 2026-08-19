@@ -22,6 +22,7 @@ _TEMP_RE = re.compile(r"\bTEMP\(K\)\s*=\s*([-+]?\d+(?:\.\d*)?(?:[EeDd][-+]?\d+)?
 _DENSITY_RE = re.compile(r"\bDensity\s*=\s*([-+]?\d+(?:\.\d*)?(?:[EeDd][-+]?\d+)?)", re.IGNORECASE)
 _PRESS_RE = re.compile(r"\bPRESS\s*=\s*([-+]?\d+(?:\.\d*)?(?:[EeDd][-+]?\d+)?)", re.IGNORECASE)
 
+PRODUCTION_TIME_TOLERANCE_NS = 5e-6
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -184,7 +185,7 @@ def reconcile_production_checkpoint(cfg: PipelineConfig, *, workspace: Path) -> 
     target_ns = float(cfg.production.target_ns)
     if last_chunk == 0:
         raise ValueError("cannot reconcile production: no completed production chunks were found")
-    if completed_ns < target_ns - 1e-9:
+    if completed_ns < target_ns - PRODUCTION_TIME_TOLERANCE_NS:
         raise ValueError(
             f"cannot reconcile production checkpoint: validated production is {completed_ns:g} ns, "
             f"below the configured target of {target_ns:g} ns"
@@ -330,7 +331,7 @@ def prepare_production(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = 
     (workspace / "logs").mkdir(parents=True, exist_ok=True)
     submission_path = root / "submission.json"
     completed_ns, last_chunk = _read_completed_chunks(workspace)
-    if completed_ns >= cfg.production.target_ns - 1e-9:
+    if completed_ns >= cfg.production.target_ns - PRODUCTION_TIME_TOLERANCE:
         if not (root / ".done").is_file():
             payload = {"stage": "production", "status": "done", "pipeline_version": __version__, "completed_at": _utc_now(), "completed_ns": completed_ns}
             (root / ".done").write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
