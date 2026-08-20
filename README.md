@@ -1,6 +1,6 @@
 # lyso-md
 
-`lyso-md` is a restartable FASTA-to-MD pipeline for a narrow family of human lysozyme C designs bound to a fixed peptidoglycan ligand. This repository currently implements **Phases 0-2**, including external workspace initialization and LSF-submitted Chai-1 holo prediction. Amber/GLYCAM molecular preparation remains deferred to later phases.
+`lyso-md` is a restartable FASTA-to-MD pipeline for a narrow family of human lysozyme C designs bound to a fixed peptidoglycan ligand. This repository implements the complete Phases 0-18 pipeline, including external workspace initialization, LSF-submitted Chai-1 prediction, GLYCAM/Amber preparation, MD equilibration and production, CPPTRAJ analysis, QC reporting, and regression/reproducibility tests.
 
 ## Design principles
 
@@ -106,7 +106,7 @@ design_042.backup-20260811T210000Z/
 
 and a fresh `design_042/` is created. Existing results are never silently removed.
 
-## CLI through Phase 2
+## CLI
 
 Implemented:
 
@@ -117,7 +117,7 @@ lyso-md prepare CONFIG [--from chai] [--through chai] [--dry-run] [--local]
 lyso-md submit CONFIG [--from chai] [--through chai] [--dry-run]
 ```
 
-`prepare` and `submit` are convenience wrappers with `--from` / `--through`. In Phase 2, both submit Chai through LSF by default. `prepare --local` is the explicit direct-execution escape hatch for development. `status` reports stage checkpoints and recorded LSF job IDs; analysis remains deferred to Phase 16.
+`prepare` and `submit` are convenience wrappers with `--from` / `--through`. In Phase 2, both submit Chai through LSF by default. `prepare --local` is the explicit direct-execution escape hatch for development. `status` reports stage checkpoints and recorded LSF job IDs; `analyze` and `report` operate on completed production workspaces.
 
 ## LSF execution
 
@@ -455,3 +455,29 @@ lyso-md report /path/to/workspace/config.yaml
 ```
 
 Phase 17 writes `07_analysis/qc_summary.json` and `07_analysis/qc_report.md`. The JSON separates hard failures, warnings, and informational metrics and aggregates checkpoint status, validation records, production completion/observables, and analysis-output metadata. The Markdown report provides a concise human-readable summary of the same information.
+
+## Phase 18: regression tests and reproducibility
+
+Phase 18 consolidates deterministic regression coverage and an optional high-fidelity
+regression fixture for the known-good human lysozyme C + NAG-NAM-NAG-NAM system.
+
+The normal test suite never requires Amber, Chai, CPPTRAJ, LSF, or scientific regression
+assets. External executables are mocked in unit tests. Run the suite with:
+
+```bash
+pytest
+```
+
+For high-fidelity regression testing, set `LYSO_MD_REGRESSION_DATA` to the directory
+containing the external regression bundle:
+
+```bash
+export LYSO_MD_REGRESSION_DATA=/path/to/asset_bundle_final
+pytest tests/test_regression_assets.py
+```
+
+The optional bundle is expected to contain `input/sequence.fasta`, the raw Chai CIF,
+ProDy PDB, original GLYCAM-Web ZIP, and the reference mapping/topology/log assets.
+These assets remain outside Git because they are large and/or external scientific
+inputs. The regression tests verify the authoritative GLYCAM counts and residue order
+and reproduce the historical 67-atom Chai-to-GLYCAM mapping.
