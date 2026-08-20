@@ -67,6 +67,12 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     assert "projection modes ca_modes.dat beg 1 end 3 @CA out ca_projection.dat" in projection
     contacts = (stage / "contacts.in").read_text()
     assert "nativecontacts :1-130 :131-135 distance 4.0 skipnative out protein_glycan_contacts.dat" in contacts
+    distances = (stage / "distances.in").read_text()
+    assert "distance protein_glycan_ca_distance :65@CA :132@C1 out distances.dat" in distances
+    assert ":131@C1" not in distances
+    angles = (stage / "angles.in").read_text()
+    assert "angle protein_glycan_angle :64@CA :65@CA :132@C1 out angles.dat" in angles
+    assert ":131@C1" not in angles
     assert "\ncontacts :1-130 :131-135" not in "\n" + contacts
     modes = (stage / "pca_modes.in").read_text()
     assert "trajoutmask @CA" in modes

@@ -2,3 +2,8 @@
 help contacts
 help nativecontacts
 quit
+# 08/20/26 13:57:41
+distances -h
+distances -help
+distances help
+quit

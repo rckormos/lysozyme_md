@@ -119,8 +119,8 @@ def _analysis_inputs(processed_topology: Path, processed_trajectory: Path, root:
         + "cluster hieragglo epsilon 2.0 rms @CA sieve 10 out cluster.dat summary cluster_summary.dat info cluster_info.dat\nrun\nquit\n",
         "average_structure.in": header + "average average_structure.pdb pdb\nrun\nquit\n",
         "pairwise_rmsd.in": header + "rms @CA pairwise out pairwise_rmsd.dat\nrun\nquit\n",
-        "distances.in": header + "distance protein_glycan_ca_distance :65@CA :131@C1 out distances.dat\nrun\nquit\n",
-        "angles.in": header + "angle protein_glycan_angle :64@CA :65@CA :131@C1 out angles.dat\nrun\nquit\n",
+        "distances.in": header + "distance protein_glycan_ca_distance :65@CA :132@C1 out distances.dat\nrun\nquit\n",
+        "angles.in": header + "angle protein_glycan_angle :64@CA :65@CA :132@C1 out angles.dat\nrun\nquit\n",
     }
 
 
