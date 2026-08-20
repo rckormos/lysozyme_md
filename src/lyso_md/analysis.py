@@ -358,7 +358,7 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
         _checkpoint_write(stage, name, outputs)
 
     required = [processed_trajectory, processed_topology, pairwise_trajectory, clustering_trajectory]
-    for outputs in analysis_outputs.values():
+    for _, outputs in analysis_steps.values():
         required.extend(outputs)
     missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]
     if missing:

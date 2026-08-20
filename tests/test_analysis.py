@@ -207,3 +207,16 @@ def test_run_cpptraj_redirects_relative_output_to_temp(monkeypatch: pytest.Monke
     analysis_mod._run_cpptraj(input_path, cwd=tmp_path, outputs=[output])
     assert output.read_text(encoding="utf-8") == "#Frame RMSD\n1 0.0\n"
     assert not (tmp_path / "rmsd_protein_ca.dat.tmp").exists()
+
+
+def test_analysis_uses_analysis_steps_for_final_required_outputs() -> None:
+    from lyso_md import analysis as analysis_mod
+
+    steps = {
+        "rmsd": ("rmsd.in", [Path("rmsd.dat")]),
+        "pca_covariance": ("pca.in", [Path("ca_modes.dat")]),
+    }
+    required: list[Path] = []
+    for _, outputs in steps.values():
+        required.extend(outputs)
+    assert required == [Path("rmsd.dat"), Path("ca_modes.dat")]
