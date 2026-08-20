@@ -117,3 +117,34 @@ def test_analysis_checkpoint_detects_tampered_output(tmp_path: Path) -> None:
     analysis_mod._checkpoint_write(stage, "preprocess", [processed, topology])
     processed.write_bytes(b"tampered")
     assert not analysis_mod._checkpoint_valid(stage, "preprocess", [processed, topology])
+
+
+def test_run_cpptraj_redirects_relative_output_to_temp(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from lyso_md import analysis as analysis_mod
+
+    input_path = tmp_path / "rmsd.in"
+    output = tmp_path / "rmsd_protein_ca.dat"
+    input_path.write_text(
+        "parm topology.parm7\n"
+        "trajin processed.nc\n"
+        "rms first :1-130@CA out rmsd_protein_ca.dat\n"
+        "run\nquit\n",
+        encoding="utf-8",
+    )
+
+    class Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, *, cwd, text, capture_output):
+        rendered = input_path.with_name("rmsd.tmp.in").read_text(encoding="utf-8")
+        assert "rmsd_protein_ca.dat.tmp" in rendered
+        (tmp_path / "rmsd_protein_ca.dat.tmp").write_text("#Frame RMSD\n1 0.0\n", encoding="utf-8")
+        return Proc()
+
+    monkeypatch.setattr(analysis_mod.shutil, "which", lambda name: "/usr/bin/cpptraj")
+    monkeypatch.setattr(analysis_mod.subprocess, "run", fake_run)
+    analysis_mod._run_cpptraj(input_path, cwd=tmp_path, outputs=[output])
+    assert output.read_text(encoding="utf-8") == "#Frame RMSD\n1 0.0\n"
+    assert not (tmp_path / "rmsd_protein_ca.dat.tmp").exists()

@@ -191,15 +191,16 @@ def _run_cpptraj(input_path: Path, *, cwd: Path, outputs: list[Path] | None = No
     tmp_paths: list[tuple[Path, Path]] = []
     rendered = input_path.read_text(encoding="utf-8")
     if output_paths:
-        replacements = {}
+        replacements: list[tuple[Path, Path]] = []
         for output in output_paths:
             tmp = output.with_name(output.name + ".tmp")
             if tmp.exists() or tmp.is_symlink():
                 tmp.unlink()
-            replacements[str(output)] = str(tmp)
+            replacements.append((output, tmp))
             tmp_paths.append((output, tmp))
-        for final, tmp in replacements.items():
-            rendered = rendered.replace(final, tmp)
+        for final, tmp in replacements:
+            rendered = rendered.replace(str(final), str(tmp))
+            rendered = rendered.replace(final.name, tmp.name)
         input_path = input_path.with_name(input_path.stem + ".tmp.in")
         input_path.write_text(rendered, encoding="utf-8")
     proc = subprocess.run([executable, "-i", str(input_path)], cwd=cwd, text=True, capture_output=True)
