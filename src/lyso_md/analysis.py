@@ -103,6 +103,9 @@ def _analysis_inputs(processed_topology: Path, processed_trajectory: Path, root:
         + "rms first @CA\n"
         + "matrix covar name covar @CA\n"
         + "diagmatrix covar out ca_modes.dat vecs 20 name ca_modes\n"
+        + "run\nquit\n",
+        "pca_projection.in": header
+        + "readdata ca_modes.dat name ca_modes\n"
         + "projection modes ca_modes.dat beg 1 end 3 @CA out ca_projection.dat\n"
         + "run\nquit\n",
         "pca_modes.in": header
@@ -303,7 +306,8 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
         "hbond_protein_to_glycan": [stage / "hbond_protein_to_glycan.dat"],
         "hbond_glycan_to_protein": [stage / "hbond_glycan_to_protein.dat"],
         "contacts": [stage / "protein_glycan_contacts.dat"],
-        "pca": [stage / "ca_modes.dat", stage / "ca_projection.dat"],
+        "pca_covariance": [stage / "ca_modes.dat"],
+        "pca_projection": [stage / "ca_projection.dat"],
         "pca_modes": [stage / "mode1.nc", stage / "mode2.nc", stage / "mode3.nc"],
         "dccm": [stage / "dccm.dat"],
         "clustering": [stage / "cluster.dat", stage / "cluster_summary.dat"],

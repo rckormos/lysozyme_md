@@ -53,7 +53,7 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     for name in [
         "preprocess.in", "pairwise_preprocess.in", "rmsd.in", "rmsf.in", "rg.in", "dssp.in",
         "hbond_protein_to_glycan.in", "hbond_glycan_to_protein.in", "contacts.in", "pca.in",
-        "pca_modes.in", "dccm.in", "clustering.in", "average_structure.in", "pairwise_rmsd.in",
+        "pca_projection.in", "pca_modes.in", "dccm.in", "clustering.in", "average_structure.in", "pairwise_rmsd.in",
         "distances.in", "angles.in", "analysis_manifest.json",
     ]:
         assert (stage / name).is_file(), name
@@ -61,7 +61,10 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     assert "rms first @CA" in pca
     assert "matrix covar name covar @CA" in pca
     assert "diagmatrix covar out ca_modes.dat vecs 20 name ca_modes" in pca
-    assert "projection modes ca_modes.dat beg 1 end 3 @CA out ca_projection.dat" in pca
+    assert "projection modes" not in pca
+    projection = (stage / "pca_projection.in").read_text()
+    assert "readdata ca_modes.dat name ca_modes" in projection
+    assert "projection modes ca_modes.dat beg 1 end 3 @CA out ca_projection.dat" in projection
     contacts = (stage / "contacts.in").read_text()
     assert "nativecontacts :1-130 :131-135 distance 4.0 skipnative out protein_glycan_contacts.dat" in contacts
     assert "\ncontacts :1-130 :131-135" not in "\n" + contacts
