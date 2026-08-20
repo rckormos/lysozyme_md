@@ -445,3 +445,13 @@ lyso-md analyze CONFIG
 ```
 
 Phase 16 preprocesses completed production chunks with CPPTRAJ, imaging and fitting on the protein backbone, stripping water/ions, and writing a NetCDF trajectory without box information. ParmEd creates the matching stripped topology. It then generates/runs the standard RMSD, RMSF, Rg, DSSP, bidirectional protein-glycan H-bond, contact, C-alpha PCA, PCA projection/mode, DCCM, hierarchical clustering, average-structure, subsampled pairwise RMSD, distance, and angle analyses. PCA uses the prescribed `@CA` masks and 20 eigenvectors; PCA mode pseudo-trajectories use `trajoutmask @CA`. The analysis checkpoint is `07_analysis/.done`.
+
+## Phase 17 — QC report
+
+After Phase 16 analysis completes, generate the aggregate quality-control report with:
+
+```bash
+lyso-md report /path/to/workspace/config.yaml
+```
+
+Phase 17 writes `07_analysis/qc_summary.json` and `07_analysis/qc_report.md`. The JSON separates hard failures, warnings, and informational metrics and aggregates checkpoint status, validation records, production completion/observables, and analysis-output metadata. The Markdown report provides a concise human-readable summary of the same information.

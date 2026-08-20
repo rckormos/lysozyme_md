@@ -23,6 +23,7 @@ from .equilibration import prepare_npt_equilibration, run_npt_equilibration_work
 from .production import prepare_production, run_production_worker, reconcile_production_checkpoint
 from .orchestration import format_status
 from .analysis import analyze as run_analysis
+from .qc import write_qc_report
 from .logging_utils import configure_logging
 from .workspace import initialize_workspace
 
@@ -521,6 +522,20 @@ def status(
     except (ValueError, ValidationError, OSError) as exc:
         _fail(exc)
     typer.echo(format_status(workspace))
+
+
+@app.command()
+def report(
+    config: Path = typer.Argument(..., exists=True, dir_okay=False, readable=True, resolve_path=True),
+) -> None:
+    """Aggregate pipeline validation and analysis metrics into a QC report."""
+    try:
+        cfg = load_config(config, check_files=True)
+        workspace = _phase2_workspace(config)
+        result = write_qc_report(cfg, workspace=workspace)
+    except (ValueError, ValidationError, OSError, RuntimeError) as exc:
+        _fail(exc)
+    typer.echo(f"QC report complete: {workspace / '07_analysis/qc_report.md'}")
 
 
 @app.command()
