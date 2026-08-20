@@ -135,6 +135,17 @@ def _render_pairwise_preprocess(topology: Path, processed_trajectory: Path, outp
     ])
 
 
+def _render_clustering_preprocess(topology: Path, processed_trajectory: Path, output: Path) -> str:
+    return "\n".join([
+        f"parm {topology}",
+        f"trajin {processed_trajectory} 1 last 100",
+        f"trajout {output} netcdf nobox",
+        "run",
+        "quit",
+        "",
+    ])
+
+
 def _write_parmed_stripped(topology: Path, output: Path) -> None:
     try:
         import parmed as pmd
@@ -247,13 +258,21 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
     preprocess = stage / "preprocess.in"
     preprocess.write_text(_render_preprocess(topology, chunks, processed_trajectory), encoding="utf-8")
 
+    clustering_trajectory = stage / "clustering_subsampled.nc"
     inputs = _analysis_inputs(processed_topology, processed_trajectory, stage)
+    inputs["clustering.in"] = inputs["clustering.in"].replace(
+        f"trajin {processed_trajectory}", f"trajin {clustering_trajectory}"
+    )
     for name, text in inputs.items():
         (stage / name).write_text(text, encoding="utf-8")
 
     pairwise_input = stage / "pairwise_preprocess.in"
     pairwise_trajectory = stage / "pairwise_subsampled.nc"
     pairwise_input.write_text(_render_pairwise_preprocess(processed_topology, processed_trajectory, pairwise_trajectory), encoding="utf-8")
+
+    clustering_input = stage / "clustering_preprocess.in"
+    clustering_trajectory = stage / "clustering_subsampled.nc"
+    clustering_input.write_text(_render_clustering_preprocess(processed_topology, processed_trajectory, clustering_trajectory), encoding="utf-8")
 
     manifest = {
         "stage": "analysis",
@@ -263,7 +282,7 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
         "topology": str(topology),
         "processed_trajectory": str(processed_trajectory),
         "processed_topology": str(processed_topology),
-        "inputs": sorted([preprocess.name, pairwise_input.name, *inputs.keys()]),
+        "inputs": sorted([preprocess.name, pairwise_input.name, clustering_input.name, *inputs.keys()]),
         "protein_residues": "1-130",
         "glycan_residues": "131-135",
         "pca": {
@@ -298,6 +317,11 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
             _run_cpptraj(pairwise_input, cwd=stage, outputs=[pairwise_trajectory])
         _checkpoint_write(stage, "pairwise_preprocess", [pairwise_trajectory])
 
+    if not _checkpoint_valid(stage, "clustering_preprocess", [clustering_trajectory]):
+        if not _outputs_exist([clustering_trajectory]):
+            _run_cpptraj(clustering_input, cwd=stage, outputs=[clustering_trajectory])
+        _checkpoint_write(stage, "clustering_preprocess", [clustering_trajectory])
+
     analysis_steps = {
         "rmsd": ("rmsd.in", [stage / "rmsd_protein_ca.dat", stage / "rmsd_glycan.dat"]),
         "rmsf": ("rmsf.in", [stage / "rmsf_ca.dat"]),
@@ -325,7 +349,7 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
         _run_cpptraj(stage / input_name, cwd=stage, outputs=outputs)
         _checkpoint_write(stage, name, outputs)
 
-    required = [processed_trajectory, processed_topology, pairwise_trajectory]
+    required = [processed_trajectory, processed_topology, pairwise_trajectory, clustering_trajectory]
     for outputs in analysis_outputs.values():
         required.extend(outputs)
     missing = [str(path) for path in required if not path.is_file() or path.stat().st_size == 0]

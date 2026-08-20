@@ -51,7 +51,7 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     assert result.dry_run is True
     stage = ws / "07_analysis"
     for name in [
-        "preprocess.in", "pairwise_preprocess.in", "rmsd.in", "rmsf.in", "rg.in", "dssp.in",
+        "preprocess.in", "pairwise_preprocess.in", "clustering_preprocess.in", "rmsd.in", "rmsf.in", "rg.in", "dssp.in",
         "hbond_protein_to_glycan.in", "hbond_glycan_to_protein.in", "contacts.in", "pca.in",
         "pca_projection.in", "pca_modes.in", "dccm.in", "clustering.in", "average_structure.in", "pairwise_rmsd.in",
         "distances.in", "angles.in", "analysis_manifest.json",
@@ -71,6 +71,10 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     modes = (stage / "pca_modes.in").read_text()
     assert "trajoutmask @CA" in modes
     assert not (stage / ".done").exists()
+    clustering_pre = (stage / "clustering_preprocess.in").read_text()
+    assert "trajin " + str(stage / "processed.nc") + " 1 last 100" in clustering_pre
+    clustering = (stage / "clustering.in").read_text()
+    assert "trajin " + str(stage / "clustering_subsampled.nc") in clustering
 
 
 def test_analysis_step_inputs_are_explicit_for_split_pca(tmp_path: Path) -> None:
