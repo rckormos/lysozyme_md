@@ -212,9 +212,17 @@ def _run_cpptraj(input_path: Path, *, cwd: Path, outputs: list[Path] | None = No
                 tmp.unlink()
             replacements.append((output, tmp))
             tmp_paths.append((output, tmp))
-        for final, tmp in replacements:
-            rendered = rendered.replace(str(final), str(tmp))
-            rendered = rendered.replace(final.name, tmp.name)
+        # Replace both absolute and basename references without cascading the
+        # newly-added .tmp suffix (e.g. avoiding .tmp.tmp). Use unique
+        # placeholders so no replacement can match text introduced by an
+        # earlier replacement.
+        for index, (final, _) in enumerate(replacements):
+            token = f"__LYSO_MD_OUTPUT_{index}__"
+            rendered = rendered.replace(str(final), token)
+            rendered = rendered.replace(final.name, token)
+        for index, (_, tmp) in enumerate(replacements):
+            token = f"__LYSO_MD_OUTPUT_{index}__"
+            rendered = rendered.replace(token, str(tmp))
         input_path = input_path.with_name(input_path.stem + ".tmp.in")
         input_path.write_text(rendered, encoding="utf-8")
     proc = subprocess.run([executable, "-i", str(input_path)], cwd=cwd, text=True, capture_output=True)

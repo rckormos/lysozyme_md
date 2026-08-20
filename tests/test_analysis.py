@@ -77,6 +77,39 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     assert "trajin " + str(stage / "clustering_subsampled.nc") in clustering
 
 
+
+def test_run_cpptraj_does_not_double_suffix_temp_output(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from lyso_md import analysis as analysis_mod
+
+    input_path = tmp_path / "clustering_preprocess.in"
+    output = tmp_path / "clustering_subsampled.nc"
+    input_path.write_text(
+        "parm topology.parm7\n"
+        "trajin processed.nc 1 last 100\n"
+        "trajout clustering_subsampled.nc netcdf nobox\n"
+        "run\nquit\n",
+        encoding="utf-8",
+    )
+
+    class Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(cmd, *, cwd, text, capture_output):
+        rendered = input_path.with_name("clustering_preprocess.tmp.in").read_text(encoding="utf-8")
+        assert "clustering_subsampled.nc.tmp" in rendered
+        assert "clustering_subsampled.nc.tmp.tmp" not in rendered
+        (tmp_path / "clustering_subsampled.nc.tmp").write_bytes(b"netcdf")
+        return Proc()
+
+    monkeypatch.setattr(analysis_mod.shutil, "which", lambda name: "/usr/bin/cpptraj")
+    monkeypatch.setattr(analysis_mod.subprocess, "run", fake_run)
+    analysis_mod._run_cpptraj(input_path, cwd=tmp_path, outputs=[output])
+    assert output.read_bytes() == b"netcdf"
+    assert not (tmp_path / "clustering_subsampled.nc.tmp").exists()
+
+
 def test_analysis_step_inputs_are_explicit_for_split_pca(tmp_path: Path) -> None:
     cfg = load_config(_config(tmp_path))
     ws = _production_workspace(tmp_path)
