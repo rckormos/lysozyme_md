@@ -298,31 +298,31 @@ def analyze(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = False) -> A
             _run_cpptraj(pairwise_input, cwd=stage, outputs=[pairwise_trajectory])
         _checkpoint_write(stage, "pairwise_preprocess", [pairwise_trajectory])
 
-    analysis_outputs = {
-        "rmsd": [stage / "rmsd_protein_ca.dat", stage / "rmsd_glycan.dat"],
-        "rmsf": [stage / "rmsf_ca.dat"],
-        "rg": [stage / "rg_protein.dat", stage / "rg_glycan.dat"],
-        "dssp": [stage / "dssp.dat"],
-        "hbond_protein_to_glycan": [stage / "hbond_protein_to_glycan.dat"],
-        "hbond_glycan_to_protein": [stage / "hbond_glycan_to_protein.dat"],
-        "contacts": [stage / "protein_glycan_contacts.dat"],
-        "pca_covariance": [stage / "ca_modes.dat"],
-        "pca_projection": [stage / "ca_projection.dat"],
-        "pca_modes": [stage / "mode1.nc", stage / "mode2.nc", stage / "mode3.nc"],
-        "dccm": [stage / "dccm.dat"],
-        "clustering": [stage / "cluster.dat", stage / "cluster_summary.dat"],
-        "average_structure": [stage / "average_structure.pdb"],
-        "pairwise_rmsd": [stage / "pairwise_rmsd.dat"],
-        "distances": [stage / "distances.dat"],
-        "angles": [stage / "angles.dat"],
+    analysis_steps = {
+        "rmsd": ("rmsd.in", [stage / "rmsd_protein_ca.dat", stage / "rmsd_glycan.dat"]),
+        "rmsf": ("rmsf.in", [stage / "rmsf_ca.dat"]),
+        "rg": ("rg.in", [stage / "rg_protein.dat", stage / "rg_glycan.dat"]),
+        "dssp": ("dssp.in", [stage / "dssp.dat"]),
+        "hbond_protein_to_glycan": ("hbond_protein_to_glycan.in", [stage / "hbond_protein_to_glycan.dat"]),
+        "hbond_glycan_to_protein": ("hbond_glycan_to_protein.in", [stage / "hbond_glycan_to_protein.dat"]),
+        "contacts": ("contacts.in", [stage / "protein_glycan_contacts.dat"]),
+        "pca_covariance": ("pca.in", [stage / "ca_modes.dat"]),
+        "pca_projection": ("pca_projection.in", [stage / "ca_projection.dat"]),
+        "pca_modes": ("pca_modes.in", [stage / "mode1.nc", stage / "mode2.nc", stage / "mode3.nc"]),
+        "dccm": ("dccm.in", [stage / "dccm.dat"]),
+        "clustering": ("clustering.in", [stage / "cluster.dat", stage / "cluster_summary.dat"]),
+        "average_structure": ("average_structure.in", [stage / "average_structure.pdb"]),
+        "pairwise_rmsd": ("pairwise_rmsd.in", [stage / "pairwise_rmsd.dat"]),
+        "distances": ("distances.in", [stage / "distances.dat"]),
+        "angles": ("angles.in", [stage / "angles.dat"]),
     }
-    for name, outputs in analysis_outputs.items():
+    for name, (input_name, outputs) in analysis_steps.items():
         if _checkpoint_valid(stage, name, outputs):
             continue
         if _outputs_exist(outputs):
             _checkpoint_write(stage, name, outputs)
             continue
-        _run_cpptraj(stage / next(k for k in inputs if k.startswith(name + ".")), cwd=stage, outputs=outputs)
+        _run_cpptraj(stage / input_name, cwd=stage, outputs=outputs)
         _checkpoint_write(stage, name, outputs)
 
     required = [processed_trajectory, processed_topology, pairwise_trajectory]

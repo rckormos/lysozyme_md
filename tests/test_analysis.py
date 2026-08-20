@@ -73,6 +73,19 @@ def test_dry_run_generates_complete_analysis_suite(tmp_path: Path) -> None:
     assert not (stage / ".done").exists()
 
 
+def test_analysis_step_inputs_are_explicit_for_split_pca(tmp_path: Path) -> None:
+    cfg = load_config(_config(tmp_path))
+    ws = _production_workspace(tmp_path)
+    stage = ws / "07_analysis"
+    stage.mkdir(parents=True)
+    from lyso_md import analysis as analysis_mod
+    inputs = analysis_mod._analysis_inputs(stage / "processed.parm7", stage / "processed.nc", stage)
+    assert "pca.in" in inputs
+    assert "pca_projection.in" in inputs
+    assert "pca_modes.in" in inputs
+
+
+
 def test_analysis_requires_completed_production(tmp_path: Path) -> None:
     cfg = load_config(_config(tmp_path))
     with pytest.raises(ValueError, match="completed 1-target production"):
