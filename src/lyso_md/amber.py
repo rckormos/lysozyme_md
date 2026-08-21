@@ -21,6 +21,10 @@ _FINAL_RE = re.compile(
     r"^\s*(\d+)\s+([-+]?\d+(?:\.\d*)?(?:[EeDd][-+]?\d+)?)\s+([-+]?\d+(?:\.\d*)?(?:[EeDd][-+]?\d+)?)\s+([-+]?\d+(?:\.\d*)?(?:[EeDd][-+]?\d+)?)\s+(.+?)\s*$",
     re.MULTILINE,
 )
+_DRMS_DEFAULT = 1.0e-3
+_XH_WARN = 0.10
+_XH_HARD = 0.30
+_XH_GROSS = 0.50
 _COMPLETION_MARKERS = ("FINAL RESULTS", "5.  TIMINGS", "5. TIMINGS")
 _WARNING_PATTERNS = ("Floating point exception", "floating point exception", "SIGFPE", "floating-point exception")
 
@@ -64,7 +68,7 @@ def _required_inputs(workspace: Path) -> tuple[Path, Path]:
 def _render_input(cfg: PipelineConfig) -> str:
     # Keep this intentionally explicit: this stage is a fixed scientific protocol,
     # with only the documented step count/configurable cutoff family carried in.
-    return f"""Hydrogen relaxation for lyso-md\n&cntrl\n  imin=1,\n  maxcyc={cfg.equilibration.hydrogen_relax_steps},\n  ncyc={cfg.equilibration.hydrogen_relax_steps // 2},\n  ntb=0,\n  igb=0,\n  cut=1000.0,\n  ntr=1,\n  restraint_wt=100.0,\n  restraintmask='!@H=',\n  ntpr=50,\n/\n"""
+    return f"""Hydrogen relaxation for lyso-md\n&cntrl\n  imin=1,\n  maxcyc={cfg.equilibration.hydrogen_relax_steps},\n  ncyc={cfg.equilibration.hydrogen_relax_steps // 2},\n  ntb=0,\n  igb=0,\n  cut=1000.0,\n  ntc=1,\n  ntf=1,\n  ntmin=1,\n  ntr=1,\n  restraint_wt=100.0,\n  restraintmask='!@H=',\n  drms={_DRMS_DEFAULT:.1e},\n  ntpr=50,\n  ntxo=2,\n/\n"""
 
 
 def _read_restart(path: Path) -> tuple[int, list[float]]:
@@ -130,9 +134,11 @@ def _parse_restart_coordinates(path: Path, natom: int) -> list[float]:
 
 
 def _parse_final_results(text: str) -> dict[str, Any]:
-    if not any(marker in text for marker in _COMPLETION_MARKERS):
-        raise ValueError("pmemd output does not contain a normal-completion marker")
-    match = _FINAL_RE.search(text)
+    marker = "FINAL RESULTS"
+    if marker not in text:
+        raise ValueError("pmemd output does not contain a FINAL RESULTS section")
+    section = text.rsplit(marker, 1)[1]
+    match = _FINAL_RE.search(section)
     if not match:
         raise ValueError("pmemd output does not contain a parseable FINAL RESULTS energy/gradient row")
     step = int(match.group(1))
@@ -145,20 +151,90 @@ def _parse_final_results(text: str) -> dict[str, Any]:
     return {"step": step, "energy": energy, "rms": rms, "gmax": gmax}
 
 
-def _validate_output(stage: Path, output_path: Path, restart_path: Path, log_path: Path, parm7: Path, proc_returncode: int) -> dict[str, Any]:
+def _xh_bond_geometry(parm7: Path, initial_coords: list[float], final_coords: list[float]) -> dict[str, Any]:
+    import parmed as pmd
+
+    structure = pmd.load_file(str(parm7))
+    if len(structure.atoms) * 3 != len(initial_coords) or len(structure.atoms) * 3 != len(final_coords):
+        raise ValueError("X-H bond validation coordinate/topology atom count mismatch")
+    records: list[dict[str, Any]] = []
+    max_abs_initial_change = 0.0
+    max_abs_r0_change = 0.0
+    warnings: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+
+    def dist(coords: list[float], i: int, j: int) -> float:
+        dx = coords[3*i] - coords[3*j]
+        dy = coords[3*i+1] - coords[3*j+1]
+        dz = coords[3*i+2] - coords[3*j+2]
+        return math.sqrt(dx*dx + dy*dy + dz*dz)
+
+    for bond in structure.bonds:
+        a, b = bond.atom1, bond.atom2
+        if not (getattr(a, "element", None) == 1 or getattr(b, "element", None) == 1):
+            continue
+        if getattr(bond, "type", None) is None or getattr(bond.type, "req", None) is None:
+            continue
+        i, j = int(a.idx), int(b.idx)
+        r0 = float(bond.type.req)
+        initial = dist(initial_coords, i, j)
+        final = dist(final_coords, i, j)
+        delta = final - initial
+        r0_delta = final - r0
+        record = {
+            "atom1": f"{a.residue.number}:{a.name}",
+            "atom2": f"{b.residue.number}:{b.name}",
+            "r0": r0,
+            "initial": initial,
+            "final": final,
+            "delta": delta,
+            "final_minus_r0": r0_delta,
+        }
+        records.append(record)
+        max_abs_initial_change = max(max_abs_initial_change, abs(delta))
+        max_abs_r0_change = max(max_abs_r0_change, abs(r0_delta))
+        if abs(r0_delta) >= _XH_HARD or final > r0 + _XH_GROSS:
+            failures.append(record)
+        elif abs(r0_delta) >= _XH_WARN:
+            warnings.append(record)
+
+    return {
+        "bond_count": len(records),
+        "max_abs_change_from_initial": max_abs_initial_change,
+        "max_abs_change_from_equilibrium": max_abs_r0_change,
+        "warnings": warnings,
+        "failures": failures,
+        "passed": not failures,
+    }
+
+
+def _validate_output(stage: Path, output_path: Path, restart_path: Path, log_path: Path, parm7: Path, initial_restart: Path, proc_returncode: int) -> dict[str, Any]:
     log_text = log_path.read_text(encoding="utf-8", errors="replace")
     final = _parse_final_results(log_text)
     warnings = [line.strip() for line in log_text.splitlines() if any(pattern in line for pattern in _WARNING_PATTERNS)]
+    if final["rms"] > _DRMS_DEFAULT:
+        raise ValueError(
+            f"hydrogen relaxation did not converge: final RMS gradient {final['rms']:.6g} > drms {_DRMS_DEFAULT:.1e}"
+        )
     if not restart_path.is_file() or restart_path.stat().st_size == 0:
         raise ValueError(f"pmemd did not produce a valid restart: {restart_path}")
     natom = _parse_restart_atom_count(restart_path)
-    _parse_restart_coordinates(restart_path, natom)
-    # Parse NATOM from the Phase 7 topology using the same simple POINTERS layout
-    # already validated by LEaP.  The restart count must agree.
+    final_coords = _parse_restart_coordinates(restart_path, natom)
+    initial_natom = _parse_restart_atom_count(initial_restart)
+    initial_coords = _parse_restart_coordinates(initial_restart, initial_natom)
+    if initial_natom != natom:
+        raise ValueError(f"hydrogen-relaxation initial/final atom counts differ: {initial_natom} != {natom}")
     parm_text = parm7.read_text(encoding="utf-8", errors="replace")
     match = re.search(r"%FLAG POINTERS\s+%FORMAT\([^\n]+\)\s*\n\s*(\d+)", parm_text)
     if match and int(match.group(1)) != natom:
         raise ValueError(f"hydrogen-relaxation restart atom count {natom} disagrees with parm7 NATOM {match.group(1)}")
+    xh = _xh_bond_geometry(parm7, initial_coords, final_coords)
+    if not xh["passed"]:
+        first = xh["failures"][0]
+        raise ValueError(
+            "hydrogen relaxation produced an invalid X-H bond: "
+            f"{first['atom1']}-{first['atom2']} final={first['final']:.3f} A, r0={first['r0']:.3f} A"
+        )
     if proc_returncode != 0 and not final:
         raise RuntimeError(f"pmemd exited with status {proc_returncode}")
     return {
@@ -171,13 +247,16 @@ def _validate_output(stage: Path, output_path: Path, restart_path: Path, log_pat
         "checks": {
             "normal_completion": True,
             "finite_energy_gradient": True,
+            "converged_rms": final["rms"] <= _DRMS_DEFAULT,
+            "xh_bonds_valid": xh["passed"],
             "restart_exists": True,
             "finite_coordinates": True,
             "matching_atom_counts": True,
             "passed": True,
         },
-        "warnings": warnings,
-        "inputs": {"parm7": str(parm7), "restart": str(stage / "complex_dry.rst7")},
+        "warnings": warnings + xh["warnings"],
+        "xh_bond_validation": xh,
+        "inputs": {"parm7": str(parm7), "restart": str(initial_restart)},
         "outputs": {"input": str(stage / "hrelax.in"), "log": str(log_path), "restart": str(output_path)},
         "sha256": {name: _sha256(path) for name, path in (("hrelax.in", stage / "hrelax.in"), ("hrelax.out", log_path), ("complex_hrelaxed.rst7", output_path))},
     }
@@ -223,7 +302,7 @@ def relax_hydrogens(cfg: PipelineConfig, *, workspace: Path, dry_run: bool = Fal
     log_path.write_text(combined, encoding="utf-8")
     if proc.returncode != 0 and not any(marker in combined for marker in _COMPLETION_MARKERS):
         raise RuntimeError(f"pmemd exited with status {proc.returncode}; see {log_path}")
-    validation = _validate_output(stage, output_path, output_path, log_path, parm7, proc.returncode)
+    validation = _validate_output(stage, output_path, output_path, log_path, parm7, rst7, proc.returncode)
     validation_path.write_text(json.dumps(validation, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     sentinel = {
         "stage": "hydrogen_relax",
